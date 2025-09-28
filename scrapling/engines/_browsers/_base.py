@@ -286,19 +286,13 @@ class StealthySessionMixin:
                 return ctype
 
         # Check if turnstile captcha is embedded inside the page (Usually inside a closed Shadow iframe)
+        log.warning("Checking for Turnstile captcha...")
         selector = Selector(content=page_content)
         if selector.css(
             'script[src*="challenges.cloudflare.com/turnstile/v"]'
         ):
             log.warning(
                 "Turnstile captcha detected."
-            )
-            return "embedded"
-        if selector.css(
-            'iframe[src*="challenges.cloudflare.com/cdn-cli/challenge-platform"]'
-        ):
-            log.warning(
-                "Cloudflare challenge platform detected."
             )
             return "embedded"
 
