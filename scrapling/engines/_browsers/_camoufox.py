@@ -170,8 +170,10 @@ class StealthySession(StealthySessionMixin, SyncSession):
     def __create__(self):
         """Create a browser for this instance and context."""
         self.playwright = sync_playwright().start()
-        self.context = self.playwright.firefox.launch_persistent_context(  # pragma: no cover
-            **self.launch_options
+        self.context = (
+            self.playwright.firefox.launch_persistent_context(  # pragma: no cover
+                **self.launch_options
+            )
         )
 
         if self.init_script:  # pragma: no cover
@@ -222,6 +224,7 @@ class StealthySession(StealthySessionMixin, SyncSession):
         :param page: The targeted page
         :return:
         """
+        log.info("Checking for Cloudflare challenge...")
         challenge_type = self._detect_cloudflare(self._get_page_content(page))
         if not challenge_type:
             log.error("No Cloudflare challenge found.")
@@ -229,7 +232,9 @@ class StealthySession(StealthySessionMixin, SyncSession):
         else:
             log.info(f'The turnstile version discovered is "{challenge_type}"')
             if challenge_type == "non-interactive":
-                while "<title>Just a moment...</title>" in (self._get_page_content(page)):
+                while "<title>Just a moment...</title>" in (
+                    self._get_page_content(page)
+                ):
                     log.info("Waiting for Cloudflare wait page to disappear.")
                     page.wait_for_timeout(1000)
                     page.wait_for_load_state()
@@ -237,7 +242,9 @@ class StealthySession(StealthySessionMixin, SyncSession):
                 return
 
             else:
-                box_selector = "#cf_turnstile div, #cf-turnstile div, .turnstile>div>div"
+                box_selector = (
+                    "#cf_turnstile div, #cf-turnstile div, .turnstile>div>div"
+                )
                 if challenge_type != "embedded":
                     box_selector = ".main-content p+div>div>div"
                     while "Verifying you are human." in self._get_page_content(page):
@@ -327,7 +334,9 @@ class StealthySession(StealthySessionMixin, SyncSession):
 
         final_response = None
         referer = (
-            generate_convincing_referer(url) if (params.google_search and "referer" not in self._headers_keys) else None
+            generate_convincing_referer(url)
+            if (params.google_search and "referer" not in self._headers_keys)
+            else None
         )
 
         def handle_response(finished_response: SyncPlaywrightResponse):
@@ -338,7 +347,9 @@ class StealthySession(StealthySessionMixin, SyncSession):
             ):
                 final_response = finished_response
 
-        page_info = self._get_page(params.timeout, params.extra_headers, params.disable_resources)
+        page_info = self._get_page(
+            params.timeout, params.extra_headers, params.disable_resources
+        )
         page_info.mark_busy(url=url)
 
         try:  # pragma: no cover
@@ -496,8 +507,10 @@ class AsyncStealthySession(StealthySessionMixin, AsyncSession):
     async def __create__(self):
         """Create a browser for this instance and context."""
         self.playwright: AsyncPlaywright = await async_playwright().start()
-        self.context: AsyncBrowserContext = await self.playwright.firefox.launch_persistent_context(
-            **self.launch_options
+        self.context: AsyncBrowserContext = (
+            await self.playwright.firefox.launch_persistent_context(
+                **self.launch_options
+            )
         )
 
         if self.init_script:  # pragma: no cover
@@ -555,7 +568,9 @@ class AsyncStealthySession(StealthySessionMixin, AsyncSession):
         else:
             log.info(f'The turnstile version discovered is "{challenge_type}"')
             if challenge_type == "non-interactive":  # pragma: no cover
-                while "<title>Just a moment...</title>" in (await self._get_page_content(page)):
+                while "<title>Just a moment...</title>" in (
+                    await self._get_page_content(page)
+                ):
                     log.info("Waiting for Cloudflare wait page to disappear.")
                     await page.wait_for_timeout(1000)
                     await page.wait_for_load_state()
@@ -563,10 +578,14 @@ class AsyncStealthySession(StealthySessionMixin, AsyncSession):
                 return
 
             else:
-                box_selector = "#cf_turnstile div, #cf-turnstile div, .turnstile>div>div"
+                box_selector = (
+                    "#cf_turnstile div, #cf-turnstile div, .turnstile>div>div"
+                )
                 if challenge_type != "embedded":
                     box_selector = ".main-content p+div>div>div"
-                    while "Verifying you are human." in (await self._get_page_content(page)):
+                    while "Verifying you are human." in (
+                        await self._get_page_content(page)
+                    ):
                         # Waiting for the verify spinner to disappear, checking every 1s if it disappeared
                         await page.wait_for_timeout(500)
 
@@ -653,7 +672,9 @@ class AsyncStealthySession(StealthySessionMixin, AsyncSession):
 
         final_response = None
         referer = (
-            generate_convincing_referer(url) if (params.google_search and "referer" not in self._headers_keys) else None
+            generate_convincing_referer(url)
+            if (params.google_search and "referer" not in self._headers_keys)
+            else None
         )
 
         async def handle_response(finished_response: AsyncPlaywrightResponse):
@@ -664,7 +685,9 @@ class AsyncStealthySession(StealthySessionMixin, AsyncSession):
             ):
                 final_response = finished_response
 
-        page_info = await self._get_page(params.timeout, params.extra_headers, params.disable_resources)
+        page_info = await self._get_page(
+            params.timeout, params.extra_headers, params.disable_resources
+        )
         page_info.mark_busy(url=url)
 
         try:
@@ -702,7 +725,9 @@ class AsyncStealthySession(StealthySessionMixin, AsyncSession):
                     # Wait again after waiting for the selector, helpful with protections like Cloudflare
                     await page_info.page.wait_for_load_state(state="load")
                     if params.load_dom:
-                        await page_info.page.wait_for_load_state(state="domcontentloaded")
+                        await page_info.page.wait_for_load_state(
+                            state="domcontentloaded"
+                        )
                     if params.network_idle:
                         await page_info.page.wait_for_load_state("networkidle")
                 except Exception as e:
