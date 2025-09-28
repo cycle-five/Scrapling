@@ -136,11 +136,7 @@ class DynamicSessionMixin:
         self.wait_selector_state = config.wait_selector_state
         self.selector_config = config.selector_config
         self.page_action = config.page_action
-        self._headers_keys = (
-            set(map(str.lower, self.extra_headers.keys()))
-            if self.extra_headers
-            else set()
-        )
+        self._headers_keys = set(map(str.lower, self.extra_headers.keys())) if self.extra_headers else set()
         self.__initiate_browser_options__()
 
     def __initiate_browser_options__(self):
@@ -151,11 +147,7 @@ class DynamicSessionMixin:
                     self.headless,
                     self.proxy,
                     self.locale,
-                    (
-                        tuple(self.extra_headers.items())
-                        if self.extra_headers
-                        else tuple()
-                    ),
+                    (tuple(self.extra_headers.items()) if self.extra_headers else tuple()),
                     self.useragent,
                     self.real_chrome,
                     self.stealth,
@@ -163,9 +155,7 @@ class DynamicSessionMixin:
                     self.disable_webgl,
                 )
             )
-            self.launch_options["extra_http_headers"] = dict(
-                self.launch_options["extra_http_headers"]
-            )
+            self.launch_options["extra_http_headers"] = dict(self.launch_options["extra_http_headers"])
             self.launch_options["proxy"] = dict(self.launch_options["proxy"]) or None
             self.context_options = dict()
         else:
@@ -175,18 +165,12 @@ class DynamicSessionMixin:
                 _context_kwargs(
                     self.proxy,
                     self.locale,
-                    (
-                        tuple(self.extra_headers.items())
-                        if self.extra_headers
-                        else tuple()
-                    ),
+                    (tuple(self.extra_headers.items()) if self.extra_headers else tuple()),
                     self.useragent,
                     self.stealth,
                 )
             )
-            self.context_options["extra_http_headers"] = dict(
-                self.context_options["extra_http_headers"]
-            )
+            self.context_options["extra_http_headers"] = dict(self.context_options["extra_http_headers"])
             self.context_options["proxy"] = dict(self.context_options["proxy"]) or None
 
 
@@ -221,11 +205,7 @@ class StealthySessionMixin:
         self.selector_config = config.selector_config
         self.additional_args = config.additional_args
         self.page_action = config.page_action
-        self._headers_keys = (
-            set(map(str.lower, self.extra_headers.keys()))
-            if self.extra_headers
-            else set()
-        )
+        self._headers_keys = set(map(str.lower, self.extra_headers.keys())) if self.extra_headers else set()
         self.__initiate_browser_options__()
 
     def __initiate_browser_options__(self):
@@ -286,14 +266,8 @@ class StealthySessionMixin:
                 return ctype
 
         # Check if turnstile captcha is embedded inside the page (Usually inside a closed Shadow iframe)
-        log.warning("Checking for Turnstile captcha...")
         selector = Selector(content=page_content)
-        if selector.css(
-            'script[src*="challenges.cloudflare.com/turnstile/v"]'
-        ):
-            log.warning(
-                "Turnstile captcha detected."
-            )
+        if selector.css('script[src*="challenges.cloudflare.com/turnstile/v"]'):
             return "embedded"
 
         return None

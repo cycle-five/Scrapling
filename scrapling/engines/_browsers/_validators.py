@@ -118,6 +118,8 @@ class CamoufoxConfig(Struct, kw_only=True, frozen=False):
     load_dom: bool = True
     humanize: bool | float = True
     solve_cloudflare: bool = False
+    solve_cloudflare_x_adjust: int = 0
+    solve_cloudflare_y_adjust: int = 0
     wait: Seconds = 0
     timeout: Seconds = 30000
     init_script: Optional[str] = None
@@ -177,6 +179,8 @@ class FetchConfig(Struct, kw_only=True):
     network_idle: bool = False
     load_dom: bool = True
     solve_cloudflare: bool = False
+    solve_cloudflare_x_adjust: int = 0
+    solve_cloudflare_y_adjust: int = 0
     selector_config: Optional[Dict] = {}
 
     def to_dict(self):
@@ -198,6 +202,8 @@ class _fetch_params:
     network_idle: bool
     load_dom: bool
     solve_cloudflare: bool
+    solve_cloudflare_x_adjust: int
+    solve_cloudflare_y_adjust: int
     selector_config: Optional[Dict]
 
 
@@ -218,6 +224,10 @@ def validate_fetch(params: List[Tuple], sentinel=None) -> _fetch_params:
 
     if not result.get("solve_cloudflare"):
         result["solve_cloudflare"] = False
+    if not result.get("solve_cloudflare_x_adjust"):
+        result["solve_cloudflare_x_adjust"] = 0
+    if not result.get("solve_cloudflare_y_adjust"):
+        result["solve_cloudflare_y_adjust"] = 0
 
     return _fetch_params(**result)
 

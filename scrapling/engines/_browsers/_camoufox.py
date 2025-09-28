@@ -170,10 +170,8 @@ class StealthySession(StealthySessionMixin, SyncSession):
     def __create__(self):
         """Create a browser for this instance and context."""
         self.playwright = sync_playwright().start()
-        self.context = (
-            self.playwright.firefox.launch_persistent_context(  # pragma: no cover
-                **self.launch_options
-            )
+        self.context = self.playwright.firefox.launch_persistent_context(  # pragma: no cover
+            **self.launch_options
         )
 
         if self.init_script:  # pragma: no cover
@@ -232,9 +230,7 @@ class StealthySession(StealthySessionMixin, SyncSession):
         else:
             log.info(f'The turnstile version discovered is "{challenge_type}"')
             if challenge_type == "non-interactive":
-                while "<title>Just a moment...</title>" in (
-                    self._get_page_content(page)
-                ):
+                while "<title>Just a moment...</title>" in (self._get_page_content(page)):
                     log.info("Waiting for Cloudflare wait page to disappear.")
                     page.wait_for_timeout(1000)
                     page.wait_for_load_state()
@@ -242,9 +238,11 @@ class StealthySession(StealthySessionMixin, SyncSession):
                 return
 
             else:
-                box_selector = (
-                    "#cf_turnstile div, #cf-turnstile div, .turnstile>div>div"
-                )
+                # More specific selector for the actual clickable checkbox/iframe container
+                box_selector = "div #cf_turnstile"
+                # box_selector = (
+                #     "div #cf_turnstile, div .cf-turnstile, .turnstile>div>div"
+                # )
                 if challenge_type != "embedded":
                     box_selector = ".main-content p+div>div>div"
                     while "Verifying you are human." in self._get_page_content(page):
@@ -256,6 +254,17 @@ class StealthySession(StealthySessionMixin, SyncSession):
                     log.error("Didn't find Cloudflare iframe!")
                     return
 
+                # Debug: Log iframe and page information
+                log.info(f"Current page URL: {page.url}")
+                log.info(f"Iframe found: {iframe.url if iframe else 'None'}")
+
+                # Save screenshot for debugging
+                # import hashlib
+
+                # url_hash = hashlib.md5(page.url.encode()).hexdigest()[:8]
+                # page.screenshot(path=f"cloudflare_challenge_{url_hash}.png")
+                # log.info(f"Saved screenshot: cloudflare_challenge_{url_hash}.png")
+
                 if challenge_type != "embedded":
                     while not iframe.frame_element().is_visible():
                         # Double-checking that the iframe is loaded
@@ -264,10 +273,69 @@ class StealthySession(StealthySessionMixin, SyncSession):
                 iframe.wait_for_load_state(state="domcontentloaded")
                 iframe.wait_for_load_state("networkidle")
                 # Calculate the Captcha coordinates for any viewport
-                outer_box = page.locator(box_selector).last.bounding_box()
-                captcha_x, captcha_y = outer_box["x"] + 26, outer_box["y"] + 25
+                # Debug: Log all matching elements
+                all_elements = page.locator(box_selector).all()
+                log.info(f"Found {len(all_elements)} elements matching selector: {box_selector}")
+                for i, elem in enumerate(all_elements):
+                    try:
+                        bbox = elem.bounding_box()
+                        if bbox:
+                            log.info(
+                                f"  Element {i}: x={bbox['x']}, y={bbox['y']}, width={bbox['width']}, height={bbox['height']}"
+                            )
+                        else:
+                            log.info(f"  Element {i}: No bounding box")
+                    except Exception as e:
+                        log.info(f"  Element {i}: Error getting bbox - {e}")
+
+                # Use last element as before, but with more logging
+                locator = page.locator(box_selector).first
+                # Debug: Check if the element exists
+                if locator.count() == 0:
+                    log.error(f"Could not find Cloudflare challenge element with selector: {box_selector}")
+                    # Try to find what elements are actually on the page
+                    page.screenshot(path="cloudflare_debug.png")
+                    # Save page HTML for inspection
+                    with open("cloudflare_debug.html", "w") as f:
+                        f.write(page.content())
+                    log.error(
+                        "Saved debug screenshot and HTML. Please check cloudflare_debug.png and cloudflare_debug.html"
+                    )
+                    return
+
+                outer_box = locator.bounding_box()
+                if outer_box is None:
+                    log.error(f"Element found but bounding box is None for selector: {box_selector}")
+                    return
+
+                # Always scroll into view to ensure the element is visible and clickable
+                locator.scroll_into_view_if_needed()
+                page.wait_for_timeout(500)
+
+                # Get fresh bounding box after scroll
+                outer_box = locator.bounding_box()
+                if outer_box is None:
+                    log.error("Bounding box is None after scrolling into view")
+                    return
+
+                # locator.scroll_into_view_if_needed()
+                url = page.url
+                x_adjust, y_adjust = 0, 0
+                if "login" in url:
+                    log.info("Detected login page, adjusting captcha coordinates")
+                    y_adjust += 25
+                    x_adjust += 26
+                elif "faucet" in url:
+                    log.info("Detected faucet page, adjusting captcha coordinates")
+                    y_adjust += 25
+                    x_adjust += 455
+                captcha_x, captcha_y = (
+                    outer_box["x"] + x_adjust,
+                    outer_box["y"] + y_adjust,
+                )
 
                 # Move the mouse to the center of the window, then press and hold the left mouse button
+                log.info(f"Clicking on the captcha at coordinates ({captcha_x}, {captcha_y})")
                 page.mouse.click(captcha_x, captcha_y, delay=60, button="left")
                 if challenge_type != "embedded":
                     page.locator(".zone-name-title").wait_for(state="hidden")
@@ -334,9 +402,7 @@ class StealthySession(StealthySessionMixin, SyncSession):
 
         final_response = None
         referer = (
-            generate_convincing_referer(url)
-            if (params.google_search and "referer" not in self._headers_keys)
-            else None
+            generate_convincing_referer(url) if (params.google_search and "referer" not in self._headers_keys) else None
         )
 
         def handle_response(finished_response: SyncPlaywrightResponse):
@@ -347,9 +413,7 @@ class StealthySession(StealthySessionMixin, SyncSession):
             ):
                 final_response = finished_response
 
-        page_info = self._get_page(
-            params.timeout, params.extra_headers, params.disable_resources
-        )
+        page_info = self._get_page(params.timeout, params.extra_headers, params.disable_resources)
         page_info.mark_busy(url=url)
 
         try:  # pragma: no cover
@@ -507,10 +571,8 @@ class AsyncStealthySession(StealthySessionMixin, AsyncSession):
     async def __create__(self):
         """Create a browser for this instance and context."""
         self.playwright: AsyncPlaywright = await async_playwright().start()
-        self.context: AsyncBrowserContext = (
-            await self.playwright.firefox.launch_persistent_context(
-                **self.launch_options
-            )
+        self.context: AsyncBrowserContext = await self.playwright.firefox.launch_persistent_context(
+            **self.launch_options
         )
 
         if self.init_script:  # pragma: no cover
@@ -568,9 +630,7 @@ class AsyncStealthySession(StealthySessionMixin, AsyncSession):
         else:
             log.info(f'The turnstile version discovered is "{challenge_type}"')
             if challenge_type == "non-interactive":  # pragma: no cover
-                while "<title>Just a moment...</title>" in (
-                    await self._get_page_content(page)
-                ):
+                while "<title>Just a moment...</title>" in (await self._get_page_content(page)):
                     log.info("Waiting for Cloudflare wait page to disappear.")
                     await page.wait_for_timeout(1000)
                     await page.wait_for_load_state()
@@ -578,14 +638,15 @@ class AsyncStealthySession(StealthySessionMixin, AsyncSession):
                 return
 
             else:
+                # More specific selector for the actual clickable checkbox/iframe container
                 box_selector = (
-                    "#cf_turnstile div, #cf-turnstile div, .turnstile>div>div"
+                    "#cf_turnstile > div, #cf-turnstile > div, .cf-turnstile-wrapper, "
+                    "[id*='cf-chl-widget'], .turnstile > div:first-child, "
+                    "iframe[src*='challenges.cloudflare.com']"
                 )
                 if challenge_type != "embedded":
                     box_selector = ".main-content p+div>div>div"
-                    while "Verifying you are human." in (
-                        await self._get_page_content(page)
-                    ):
+                    while "Verifying you are human." in (await self._get_page_content(page)):
                         # Waiting for the verify spinner to disappear, checking every 1s if it disappeared
                         await page.wait_for_timeout(500)
 
@@ -602,7 +663,34 @@ class AsyncStealthySession(StealthySessionMixin, AsyncSession):
                 await iframe.wait_for_load_state(state="domcontentloaded")
                 await iframe.wait_for_load_state("networkidle")
                 # Calculate the Captcha coordinates for any viewport
-                outer_box = await page.locator(box_selector).last.bounding_box()
+                # Use first element and validate it's in viewport
+                locator = page.locator(box_selector).first
+                count = await locator.count()
+                if count == 0:
+                    log.error(f"Could not find Cloudflare challenge element with selector: {box_selector}")
+                    await page.screenshot(path="cloudflare_debug.png")
+                    with open("cloudflare_debug.html", "w") as f:
+                        f.write(await page.content())
+                    log.error(
+                        "Saved debug screenshot and HTML. Please check cloudflare_debug.png and cloudflare_debug.html"
+                    )
+                    return
+
+                outer_box = await locator.bounding_box()
+                if outer_box is None:
+                    log.error(f"Element found but bounding box is None for selector: {box_selector}")
+                    return
+
+                # Always scroll into view to ensure the element is visible and clickable
+                await locator.scroll_into_view_if_needed()
+                await page.wait_for_timeout(500)
+
+                # Get fresh bounding box after scroll
+                outer_box = await locator.bounding_box()
+                if outer_box is None:
+                    log.error("Bounding box is None after scrolling into view")
+                    return
+
                 captcha_x, captcha_y = outer_box["x"] + 26, outer_box["y"] + 25
 
                 # Move the mouse to the center of the window, then press and hold the left mouse button
@@ -672,9 +760,7 @@ class AsyncStealthySession(StealthySessionMixin, AsyncSession):
 
         final_response = None
         referer = (
-            generate_convincing_referer(url)
-            if (params.google_search and "referer" not in self._headers_keys)
-            else None
+            generate_convincing_referer(url) if (params.google_search and "referer" not in self._headers_keys) else None
         )
 
         async def handle_response(finished_response: AsyncPlaywrightResponse):
@@ -685,9 +771,7 @@ class AsyncStealthySession(StealthySessionMixin, AsyncSession):
             ):
                 final_response = finished_response
 
-        page_info = await self._get_page(
-            params.timeout, params.extra_headers, params.disable_resources
-        )
+        page_info = await self._get_page(params.timeout, params.extra_headers, params.disable_resources)
         page_info.mark_busy(url=url)
 
         try:
@@ -725,9 +809,7 @@ class AsyncStealthySession(StealthySessionMixin, AsyncSession):
                     # Wait again after waiting for the selector, helpful with protections like Cloudflare
                     await page_info.page.wait_for_load_state(state="load")
                     if params.load_dom:
-                        await page_info.page.wait_for_load_state(
-                            state="domcontentloaded"
-                        )
+                        await page_info.page.wait_for_load_state(state="domcontentloaded")
                     if params.network_idle:
                         await page_info.page.wait_for_load_state("networkidle")
                 except Exception as e:

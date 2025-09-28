@@ -16,6 +16,9 @@ __pycache__/
 *.db
 *.db-*
 
+# ai
+.claude/
+
 # installation package
 *.egg-info/
 dist/
