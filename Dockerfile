@@ -15,26 +15,29 @@ COPY pyproject.toml ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --no-install-project --all-extras --compile-bytecode
 
-# Copy source code
-COPY . .
+# Copy only files needed for project installation (excluding scrapling_pick.py)
+COPY --exclude=scrapling_pick.py . .
 
 # Install browsers and project in one optimized layer
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=cache,target=/var/cache/apt \
     --mount=type=cache,target=/var/lib/apt \
+    # Sync the full project to get all deps including playwright and camoufox
+    uv sync --all-extras --compile-bytecode && \
+    # Update apt and install browser dependencies
     apt-get update && \
     uv run playwright install-deps chromium firefox && \
     uv run playwright install chromium && \
     uv run camoufox fetch --browserforge && \
-    uv sync --all-extras --compile-bytecode && \
+    # Cleanup
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-# Expose port for MCP server HTTP transport
-EXPOSE 8000
+# Create screenshots directory
+RUN mkdir -p /app/screenshots
 
-# Set entrypoint to run scrapling
-ENTRYPOINT ["uv", "run", "scrapling"]
+# Copy the main script last so changes don't invalidate expensive layers
+COPY scrapling_pick.py .
 
-# Default command (can be overridden)
-CMD ["--help"]
+# Set entrypoint to run scrapling_pick.py
+ENTRYPOINT ["uv", "run", "python", "scrapling_pick.py"]

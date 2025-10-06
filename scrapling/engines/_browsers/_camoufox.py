@@ -1,3 +1,4 @@
+from random import randint
 from re import compile as re_compile
 
 from playwright.sync_api import (
@@ -20,10 +21,12 @@ from ._validators import validate_fetch as _validate
 from ._base import SyncSession, AsyncSession, StealthySessionMixin
 from scrapling.core.utils import log
 from scrapling.core._types import (
+    Any,
     Dict,
     List,
     Optional,
     Callable,
+    TYPE_CHECKING,
     SelectorWaitStates,
 )
 from scrapling.engines.toolbelt.convertor import (
@@ -33,7 +36,7 @@ from scrapling.engines.toolbelt.convertor import (
 from scrapling.engines.toolbelt.fingerprints import generate_convincing_referer
 
 __CF_PATTERN__ = re_compile("challenges.cloudflare.com/cdn-cgi/challenge-platform/.*")
-_UNSET = object()
+_UNSET: Any = object()
 
 
 class StealthySession(StealthySessionMixin, SyncSession):
@@ -203,7 +206,7 @@ class StealthySession(StealthySessionMixin, SyncSession):
         self._closed = True
 
     @staticmethod
-    def _get_page_content(page: Page) -> str | None:
+    def _get_page_content(page: Page) -> str:
         """
         A workaround for Playwright issue with `page.content()` on Windows. Ref.: https://github.com/microsoft/playwright/issues/16108
         :param page: The page to extract content from.
@@ -215,6 +218,7 @@ class StealthySession(StealthySessionMixin, SyncSession):
             except PlaywrightError:
                 page.wait_for_timeout(1000)
                 continue
+        return ""  # pyright: ignore
 
     def _solve_cloudflare(self, page: Page) -> None:  # pragma: no cover
         """Solve the cloudflare challenge displayed on the playwright page passed

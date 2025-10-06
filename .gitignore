@@ -62,6 +62,7 @@ venv*/
 pyvenv*/
 pip-wheel-metadata/
 poetry.lock
+uv.lock
 
 # Installer logs
 pip-log.txt
@@ -102,3 +103,7 @@ output/*/index.html
 docs/_build
 public/
 web/
+
+# other shit
+screenshots
+logged_in_data

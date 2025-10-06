@@ -57,6 +57,7 @@ pycparser==2.23
 pyee==13.0.0
 pygments==2.19.2
 pymdown-extensions==10.16.1
+pyotp==2.9.0
 pysocks==1.7.1
 python-dateutil==2.9.0.post0
 pytokens==0.1.10
@@ -64,7 +65,7 @@ pyyaml==6.0.3
 pyyaml-env-tag==1.1
 requests==2.32.5
 requests-file==2.1.0
-scrapling @ file:///home/lothrop/src/Scrapling.worktrees/dev
+scrapling @ file:///home/lothrop/src/Scrapling.worktrees/dev2
 screeninfo==0.8.1
 six==1.17.0
 tinycss2==1.4.0
