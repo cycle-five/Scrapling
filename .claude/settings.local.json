@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(black:*)"
+      "Bash(black:*)",
+      "Read(//home/lothrop/Documents/**)",
+      "Bash(python3:*)"
     ],
     "deny": [],
     "ask": []

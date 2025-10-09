@@ -108,3 +108,8 @@ output/*/index.html
 docs/_build
 public/
 web/
+# other shit
+screenshots/
+logged_in_data/
+picks_data/
+picks.env

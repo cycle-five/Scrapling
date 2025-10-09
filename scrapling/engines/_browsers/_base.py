@@ -165,7 +165,7 @@ class DynamicSessionMixin:
                     self.headless,
                     self.proxy,
                     self.locale,
-                    tuple(self.extra_headers.items()) if self.extra_headers else tuple(),
+                    (tuple(self.extra_headers.items()) if self.extra_headers else tuple()),
                     self.useragent,
                     self.real_chrome,
                     self.stealth,
@@ -185,7 +185,7 @@ class DynamicSessionMixin:
                 _context_kwargs(
                     self.proxy,
                     self.locale,
-                    tuple(self.extra_headers.items()) if self.extra_headers else tuple(),
+                    (tuple(self.extra_headers.items()) if self.extra_headers else tuple()),
                     self.useragent,
                     self.stealth,
                 )

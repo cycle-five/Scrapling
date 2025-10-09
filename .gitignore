@@ -16,6 +16,9 @@ __pycache__/
 *.db
 *.db-*
 
+# ai
+.claude/
+
 # installation package
 *.egg-info/
 dist/
@@ -59,6 +62,7 @@ venv*/
 pyvenv*/
 pip-wheel-metadata/
 poetry.lock
+uv.lock
 
 # Installer logs
 pip-log.txt
@@ -99,3 +103,10 @@ output/*/index.html
 docs/_build
 public/
 web/
+
+# other shit
+screenshots/
+logged_in_data/
+picks_data/
+picks.env
+.vscode/
