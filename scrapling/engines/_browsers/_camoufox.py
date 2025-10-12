@@ -104,6 +104,7 @@ class StealthySession(StealthySessionMixin, SyncSession):
         os_randomize: bool = False,
         disable_ads: bool = False,
         geoip: bool = False,
+        user_data_dir: str = "",
         selector_config: Optional[Dict] = None,
         additional_args: Optional[Dict] = None,
     ):
@@ -136,6 +137,7 @@ class StealthySession(StealthySessionMixin, SyncSession):
         :param google_search: Enabled by default, Scrapling will set the referer header to be as if this request came from a Google search of this website's domain name.
         :param extra_headers: A dictionary of extra headers to add to the request. _The referer set by the `google_search` argument takes priority over the referer set here if used together._
         :param proxy: The proxy to be used with requests, it can be a string or a dictionary with the keys 'server', 'username', and 'password' only.
+        :param user_data_dir: Path to a User Data Directory, which stores browser session data like cookies and local storage. The default is to create a temporary directory.
         :param selector_config: The arguments that will be passed in the end while creating the final Selector's class.
         :param additional_args: Additional arguments to be passed to Camoufox as additional settings, and it takes higher priority than Scrapling's settings.
         """
@@ -159,6 +161,7 @@ class StealthySession(StealthySessionMixin, SyncSession):
             block_images=block_images,
             block_webrtc=block_webrtc,
             os_randomize=os_randomize,
+            user_data_dir=user_data_dir,
             wait_selector=wait_selector,
             google_search=google_search,
             extra_headers=extra_headers,
@@ -173,9 +176,7 @@ class StealthySession(StealthySessionMixin, SyncSession):
     def __create__(self):
         """Create a browser for this instance and context."""
         self.playwright = sync_playwright().start()
-        self.context = self.playwright.firefox.launch_persistent_context(  # pragma: no cover
-            **self.launch_options
-        )
+        self.context = self.playwright.firefox.launch_persistent_context(**self.launch_options)
 
         if self.init_script:  # pragma: no cover
             self.context.add_init_script(path=self.init_script)
@@ -208,7 +209,7 @@ class StealthySession(StealthySessionMixin, SyncSession):
     @staticmethod
     def _get_page_content(page: Page) -> str:
         """
-        A workaround for Playwright issue with `page.content()` on Windows. Ref.: https://github.com/microsoft/playwright/issues/16108
+        A workaround for the Playwright issue with `page.content()` on Windows. Ref.: https://github.com/microsoft/playwright/issues/16108
         :param page: The page to extract content from.
         :return:
         """
@@ -226,7 +227,10 @@ class StealthySession(StealthySessionMixin, SyncSession):
         :param page: The targeted page
         :return:
         """
-        page.wait_for_load_state("networkidle")
+        try:
+            page.wait_for_load_state("networkidle", timeout=5000)
+        except PlaywrightError:
+            pass
         challenge_type = self._detect_cloudflare(self._get_page_content(page))
         if not challenge_type:
             log.error("No Cloudflare challenge found.")
@@ -270,9 +274,14 @@ class StealthySession(StealthySessionMixin, SyncSession):
                 # Move the mouse to the center of the window, then press and hold the left mouse button
                 page.mouse.click(captcha_x, captcha_y, delay=60, button="left")
                 page.wait_for_load_state("networkidle")
+                if iframe is not None:
+                    # Wait for the frame to be removed from the page
+                    while iframe in page.frames:
+                        page.wait_for_timeout(100)
                 if challenge_type != "embedded":
-                    page.locator(box_selector).wait_for(state="detached")
+                    page.locator(box_selector).last.wait_for(state="detached")
                     page.locator(".zone-name-title").wait_for(state="hidden")
+                page.wait_for_load_state(state="load")
                 page.wait_for_load_state(state="domcontentloaded")
 
                 log.info("Cloudflare captcha is solved")
@@ -344,6 +353,7 @@ class StealthySession(StealthySessionMixin, SyncSession):
             if (
                 finished_response.request.resource_type == "document"
                 and finished_response.request.is_navigation_request()
+                and finished_response.request.frame == page_info.page.main_frame
             ):
                 final_response = finished_response
 
@@ -396,7 +406,7 @@ class StealthySession(StealthySessionMixin, SyncSession):
                 page_info.page, first_response, final_response, params.selector_config
             )
 
-            # Close the page, to free up resources
+            # Close the page to free up resources
             page_info.page.close()
             self.page_pool.pages.remove(page_info)
 
@@ -436,6 +446,7 @@ class AsyncStealthySession(StealthySessionMixin, AsyncSession):
         os_randomize: bool = False,
         disable_ads: bool = False,
         geoip: bool = False,
+        user_data_dir: str = "",
         selector_config: Optional[Dict] = None,
         additional_args: Optional[Dict] = None,
     ):
@@ -469,6 +480,7 @@ class AsyncStealthySession(StealthySessionMixin, AsyncSession):
         :param extra_headers: A dictionary of extra headers to add to the request. _The referer set by the `google_search` argument takes priority over the referer set here if used together._
         :param proxy: The proxy to be used with requests, it can be a string or a dictionary with the keys 'server', 'username', and 'password' only.
         :param max_pages: The maximum number of tabs to be opened at the same time. It will be used in rotation through a PagePool.
+        :param user_data_dir: Path to a User Data Directory, which stores browser session data like cookies and local storage. The default is to create a temporary directory.
         :param selector_config: The arguments that will be passed in the end while creating the final Selector's class.
         :param additional_args: Additional arguments to be passed to Camoufox as additional settings, and it takes higher priority than Scrapling's settings.
         """
@@ -494,6 +506,7 @@ class AsyncStealthySession(StealthySessionMixin, AsyncSession):
             wait_selector=wait_selector,
             google_search=google_search,
             extra_headers=extra_headers,
+            user_data_dir=user_data_dir,
             additional_args=additional_args,
             selector_config=selector_config,
             solve_cloudflare=solve_cloudflare,
@@ -504,8 +517,8 @@ class AsyncStealthySession(StealthySessionMixin, AsyncSession):
 
     async def __create__(self):
         """Create a browser for this instance and context."""
-        self.playwright: AsyncPlaywright | None = await async_playwright().start()
-        self.context: AsyncBrowserContext | None = await self.playwright.firefox.launch_persistent_context(
+        self.playwright: AsyncPlaywright = await async_playwright().start()
+        self.context: AsyncBrowserContext = await self.playwright.firefox.launch_persistent_context(
             **self.launch_options
         )
 
@@ -529,18 +542,18 @@ class AsyncStealthySession(StealthySessionMixin, AsyncSession):
 
         if self.context:
             await self.context.close()
-            self.context = None
+            self.context = None  # pyright: ignore
 
         if self.playwright:
             await self.playwright.stop()
-            self.playwright = None
+            self.playwright = None  # pyright: ignore
 
         self._closed = True
 
     @staticmethod
     async def _get_page_content(page: async_Page) -> str:
         """
-        A workaround for Playwright issue with `page.content()` on Windows. Ref.: https://github.com/microsoft/playwright/issues/16108
+        A workaround for the Playwright issue with `page.content()` on Windows. Ref.: https://github.com/microsoft/playwright/issues/16108
         :param page: The page to extract content from.
         :return:
         """
@@ -558,7 +571,10 @@ class AsyncStealthySession(StealthySessionMixin, AsyncSession):
         :param page: The async targeted page
         :return:
         """
-        await page.wait_for_load_state("networkidle")
+        try:
+            await page.wait_for_load_state("networkidle", timeout=5000)
+        except PlaywrightError:
+            pass
         challenge_type = self._detect_cloudflare(await self._get_page_content(page))
         if not challenge_type:
             log.error("No Cloudflare challenge found.")
@@ -593,7 +609,7 @@ class AsyncStealthySession(StealthySessionMixin, AsyncSession):
                             await page.wait_for_timeout(500)
                     outer_box: Any = await (await iframe.frame_element()).bounding_box()
 
-                elif not iframe or not outer_box:
+                if not iframe or not outer_box:
                     outer_box: Any = await page.locator(box_selector).last.bounding_box()
 
                 # Calculate the Captcha coordinates for any viewport
@@ -602,9 +618,14 @@ class AsyncStealthySession(StealthySessionMixin, AsyncSession):
                 # Move the mouse to the center of the window, then press and hold the left mouse button
                 await page.mouse.click(captcha_x, captcha_y, delay=60, button="left")
                 await page.wait_for_load_state("networkidle")
+                if iframe is not None:
+                    # Wait for the frame to be removed from the page
+                    while iframe in page.frames:
+                        await page.wait_for_timeout(100)
                 if challenge_type != "embedded":
                     await page.locator(box_selector).wait_for(state="detached")
                     await page.locator(".zone-name-title").wait_for(state="hidden")
+                await page.wait_for_load_state(state="load")
                 await page.wait_for_load_state(state="domcontentloaded")
 
                 log.info("Cloudflare captcha is solved")
@@ -676,6 +697,7 @@ class AsyncStealthySession(StealthySessionMixin, AsyncSession):
             if (
                 finished_response.request.resource_type == "document"
                 and finished_response.request.is_navigation_request()
+                and finished_response.request.frame == page_info.page.main_frame
             ):
                 final_response = finished_response
 
@@ -734,7 +756,7 @@ class AsyncStealthySession(StealthySessionMixin, AsyncSession):
                 page_info.page, first_response, final_response, params.selector_config
             )
 
-            # Close the page, to free up resources
+            # Close the page to free up resources
             await page_info.page.close()
             self.page_pool.pages.remove(page_info)
 

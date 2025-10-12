@@ -97,7 +97,9 @@ class DynamicSession(DynamicSessionMixin, SyncSession):
         network_idle: bool = False,
         load_dom: bool = True,
         wait_selector_state: SelectorWaitStates = "attached",
+        user_data_dir: str = "",
         selector_config: Optional[Dict] = None,
+        additional_args: Optional[Dict] = None,
     ):
         """A Browser session manager with page pooling, it's using a persistent browser Context by default with a temporary user profile directory.
 
@@ -124,7 +126,9 @@ class DynamicSession(DynamicSessionMixin, SyncSession):
         :param google_search: Enabled by default, Scrapling will set the referer header to be as if this request came from a Google search of this website's domain name.
         :param extra_headers: A dictionary of extra headers to add to the request. _The referer set by the `google_search` argument takes priority over the referer set here if used together._
         :param proxy: The proxy to be used with requests, it can be a string or a dictionary with the keys 'server', 'username', and 'password' only.
+        :param user_data_dir: Path to a User Data Directory, which stores browser session data like cookies and local storage. The default is to create a temporary directory.
         :param selector_config: The arguments that will be passed in the end while creating the final Selector's class.
+        :param additional_args: Additional arguments to be passed to Playwright's context as additional settings, and it takes higher priority than Scrapling's settings.
         """
         self.__validate__(
             wait=wait,
@@ -143,11 +147,13 @@ class DynamicSession(DynamicSessionMixin, SyncSession):
             hide_canvas=hide_canvas,
             init_script=init_script,
             network_idle=network_idle,
+            user_data_dir=user_data_dir,
             google_search=google_search,
             extra_headers=extra_headers,
             wait_selector=wait_selector,
             disable_webgl=disable_webgl,
             selector_config=selector_config,
+            additional_args=additional_args,
             disable_resources=disable_resources,
             wait_selector_state=wait_selector_state,
         )
@@ -164,7 +170,7 @@ class DynamicSession(DynamicSessionMixin, SyncSession):
                 **self.context_options
             )
         else:
-            self.context = self.playwright.chromium.launch_persistent_context(user_data_dir="", **self.launch_options)
+            self.context = self.playwright.chromium.launch_persistent_context(**self.launch_options)
 
         if self.init_script:  # pragma: no cover
             self.context.add_init_script(path=self.init_script)
@@ -257,6 +263,7 @@ class DynamicSession(DynamicSessionMixin, SyncSession):
             if (
                 finished_response.request.resource_type == "document"
                 and finished_response.request.is_navigation_request()
+                and finished_response.request.frame == page_info.page.main_frame
             ):
                 final_response = finished_response
 
@@ -302,7 +309,7 @@ class DynamicSession(DynamicSessionMixin, SyncSession):
                 page_info.page, first_response, final_response, params.selector_config
             )
 
-            # Close the page, to free up resources
+            # Close the page to free up resources
             page_info.page.close()
             self.page_pool.pages.remove(page_info)
 
@@ -340,7 +347,9 @@ class AsyncDynamicSession(DynamicSessionMixin, AsyncSession):
         network_idle: bool = False,
         load_dom: bool = True,
         wait_selector_state: SelectorWaitStates = "attached",
+        user_data_dir: str = "",
         selector_config: Optional[Dict] = None,
+        additional_args: Optional[Dict] = None,
     ):
         """A Browser session manager with page pooling
 
@@ -368,7 +377,9 @@ class AsyncDynamicSession(DynamicSessionMixin, AsyncSession):
         :param extra_headers: A dictionary of extra headers to add to the request. _The referer set by the `google_search` argument takes priority over the referer set here if used together._
         :param proxy: The proxy to be used with requests, it can be a string or a dictionary with the keys 'server', 'username', and 'password' only.
         :param max_pages: The maximum number of tabs to be opened at the same time. It will be used in rotation through a PagePool.
+        :param user_data_dir: Path to a User Data Directory, which stores browser session data like cookies and local storage. The default is to create a temporary directory.
         :param selector_config: The arguments that will be passed in the end while creating the final Selector's class.
+        :param additional_args: Additional arguments to be passed to Playwright's context as additional settings, and it takes higher priority than Scrapling's settings.
         """
 
         self.__validate__(
@@ -388,11 +399,13 @@ class AsyncDynamicSession(DynamicSessionMixin, AsyncSession):
             hide_canvas=hide_canvas,
             init_script=init_script,
             network_idle=network_idle,
+            user_data_dir=user_data_dir,
             google_search=google_search,
             extra_headers=extra_headers,
             wait_selector=wait_selector,
             disable_webgl=disable_webgl,
             selector_config=selector_config,
+            additional_args=additional_args,
             disable_resources=disable_resources,
             wait_selector_state=wait_selector_state,
         )
@@ -409,7 +422,7 @@ class AsyncDynamicSession(DynamicSessionMixin, AsyncSession):
             self.context: AsyncBrowserContext = await browser.new_context(**self.context_options)
         else:
             self.context: AsyncBrowserContext = await self.playwright.chromium.launch_persistent_context(
-                user_data_dir="", **self.launch_options
+                **self.launch_options
             )
 
         if self.init_script:  # pragma: no cover
@@ -503,6 +516,7 @@ class AsyncDynamicSession(DynamicSessionMixin, AsyncSession):
             if (
                 finished_response.request.resource_type == "document"
                 and finished_response.request.is_navigation_request()
+                and finished_response.request.frame == page_info.page.main_frame
             ):
                 final_response = finished_response
 
@@ -552,7 +566,7 @@ class AsyncDynamicSession(DynamicSessionMixin, AsyncSession):
                 page_info.page, first_response, final_response, params.selector_config
             )
 
-            # Close the page, to free up resources
+            # Close the page to free up resources
             await page_info.page.close()
             self.page_pool.pages.remove(page_info)
             return response
