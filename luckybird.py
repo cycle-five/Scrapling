@@ -8,7 +8,8 @@ sys.path.append(".")
 
 from scrapling.engines.toolbelt.custom import Response
 from scrapling.fetchers import StealthySession
-from playwright.sync_api import Page, Error as PlaywrightError
+from playwright.sync_api import Page, Error as PlaywrightError, Locator
+from playwright._impl._errors import TimeoutError, TargetClosedError
 from casino import (
     get_credentials,
     gaussian_random_delay,
@@ -36,9 +37,42 @@ close_selectors = [
     "button[aria-label='Close']",
     ".close",
 ]
+# daily claim selectors
+main_enabled_selector = "section.dailyBonus_page button.el-button--primary:enabled"
+buy_btn_selector = "li.tw-hidden:nth-child(2) > p:nth-child(1)"
+daily_bonus_tab_selector = ".tw-self-center > div:nth-child(1) > div:nth-child(1) > div:nth-child(5)"
+claim_daily_bonus_selector = "button:has-text('Claim')"
 
 
-def claim_luckybird_daily(page: Page) -> bool:
+def luckybird_mtb(page: Page) -> bool:
+    """Claim the daily bonus from the MTB section on LuckyBird.io.
+
+    Args:
+        page: The Playwright Page object
+    Returns:
+        bool: True if claim was successful, False otherwise
+    """
+    try:
+        log.info("Navigating to MTB section...")
+        page.click(buy_btn_selector, delay=gaussian_random_delay(), timeout=3000)
+        # wait_for_load_all_safe(page)
+
+        log.info("Clicking on Daily Bonus tab...")
+        page.click(daily_bonus_tab_selector, delay=gaussian_random_delay(), timeout=3000)
+        # wait_for_load_all_safe(page)
+
+        log.info("Clicking on Claim Daily Bonus button...")
+        page.click(claim_daily_bonus_selector, delay=gaussian_random_delay(), timeout=3000)
+        # wait_for_load_all_safe(page)
+
+        log.info("Successfully claimed daily bonus from MTB section!")
+        return True
+    except (PlaywrightError, TimeoutError, TargetClosedError) as e:
+        log.error("Error during MTB daily bonus claim: %s", str(e))
+        return False
+
+
+def luckybird_daily_initial_popups(page: Page) -> bool:
     """Claim the daily bonus on LuckyBird.io.
 
     Args:
@@ -48,43 +82,48 @@ def claim_luckybird_daily(page: Page) -> bool:
         bool: True if claim was successful, False otherwise
     """
     daily_modal_selector = "section.dailyBonus_page"
-    claim_button_selector = "section.dailyBonus_page button.el-button--primary:not(.is-disabled)"
+    # claim_button_selector = "section.dailyBonus_page button.el-button--primary:not(.is-disabled)"
     close_modal_selector = "section.dailyBonus_page .commonAlert_close"
 
     try:
         # Wait for the daily bonus modal to appear
         log.info("Waiting for daily bonus modal to appear...")
-        page.wait_for_selector(daily_modal_selector, state="visible", timeout=10000)
+        page.wait_for_selector(daily_modal_selector, state="visible", timeout=3000)
+    except PlaywrightError as e:
+        log.warning("Initial alerts popups timed out: %s", str(e))
+        return False
 
+    try:
         # Find the claim button that is not disabled
-        claim_buttons = page.locator(claim_button_selector)
+        enabled_buttons: Locator = page.locator(main_enabled_selector)
 
-        if claim_buttons.count() == 0:
-            log.info("No claimable daily bonus available (already claimed or not ready)")
-            return False
+        n = 0
+        while enabled_buttons.count() > 0:
+            n += 1
+            if n > 3:
+                break
 
-        # Click the first available claim button
-        log.info("Found claimable daily bonus, clicking claim button...")
-        claim_buttons.first.click(delay=gaussian_random_delay(), timeout=5000)
+            # Click the first available claim button
+            log.info("Found enabled button, clicking...")
+            enabled_buttons.first.click(delay=gaussian_random_delay(), timeout=5000)
 
+            enabled_buttons: Locator = page.locator(main_enabled_selector)
         # Wait for the claim to process
         wait_for_load_all_safe(page, timeout=3000)
 
         log.info("Successfully claimed daily bonus!")
         return True
-
     except PlaywrightError as e:
-        log.warning("Could not claim daily bonus: %s", str(e))
-        return False
-    finally:
-        # Try to close the modal if it's still open
-        try:
-            close_button = page.locator(close_modal_selector)
-            if close_button.count() > 0:
-                close_button.click(delay=gaussian_random_delay(), timeout=3000)
-                log.info("Closed daily bonus modal")
-        except PlaywrightError:
-            pass
+        log.error("Error clicking button for daily: %s", str(e))
+
+    # Try to close the modal if it's still open
+    try:
+        close_button = page.locator(close_modal_selector)
+        if close_button.count() > 0:
+            close_button.click(delay=gaussian_random_delay(), timeout=3000)
+            log.info("Closed daily bonus modal")
+    except PlaywrightError:
+        pass
 
 
 def make_luckybird_action(
@@ -145,7 +184,9 @@ def make_luckybird_action(
 
         # Claim the daily bonus
         if not skip_claim:
-            claim_luckybird_daily(page)
+            claimed = luckybird_daily_initial_popups(page)
+            if not claimed:
+                luckybird_mtb(page)
 
     return luckybird_action
 

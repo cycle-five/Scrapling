@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from functools import wraps
 from typing import Callable, TypeVar, Any, Dict, List, Optional
 from pathlib import Path
-from playwright.sync_api import Page, ElementHandle
+from playwright.sync_api import Page, ElementHandle, Locator
 from scrapling.engines.toolbelt.custom import Response, Selector
 from scrapling.fetchers import StealthySession
 from scrapling.cli import log
@@ -60,6 +60,7 @@ class Pick:
     target: float = 0.0
     remaining_claims: int = 0
     free_spins: int = 0
+    cooldown_timer: Optional[str] = None
 
     def __init__(self, url: str, currency: str):
         self.url = url
@@ -68,9 +69,10 @@ class Pick:
 
     def __str__(self):
         if self.last_update is None:
-            return "{: <21} | {: <8} | {: >15} | {: >15} | {: >15} | {: >15} | {: >8} | {: >8}".format(
+            return "{: <21} | {: <8} | {: >15} | {: >15} | {: >15} | {: >15} | {: >8} | {: >8} | {: > 15}".format(
                 self.url,
                 self.currency,
+                "N/A",
                 "N/A",
                 "N/A",
                 "N/A",
@@ -83,7 +85,7 @@ class Pick:
             diff = self.balance - self.history[-1][1]
         else:
             diff = 0.0
-        return "{: <21} | {: <8} | {: >15} | {: >15} | {: >15} | {: >15} | {: >8} | {: >8}".format(
+        return "{: <21} | {: <8} | {: >15} | {: >15} | {: >15} | {: >15} | {: >8} | {: >12} | {: >15}".format(
             self.url,
             self.currency,
             format(self.balance, ".8f"),
@@ -92,6 +94,7 @@ class Pick:
             format(diff, ".8f"),
             str(self.remaining_claims),
             str(self.free_spins),
+            str(self.cooldown_timer) if self.cooldown_timer else "N/A",
         )
 
     def update(
@@ -101,6 +104,7 @@ class Pick:
         target: float = None,
         remaining_claims: int = None,
         free_spins: int = None,
+        cooldown_timer: Optional[str] = None,
         account_state: AccountState = None,
     ):
         """Update the Pick with new account state data.
@@ -120,6 +124,7 @@ class Pick:
             target = account_state.target
             remaining_claims = account_state.remaining_claims
             free_spins = account_state.free_spins
+            cooldown_timer = account_state.time_remaining
         elif balance is None or wagered is None or target is None:
             raise ValueError("Either account_state or all individual parameters must be provided")
 
@@ -140,6 +145,7 @@ class Pick:
         self.remaining_claims = remaining_claims
         self.free_spins = free_spins
         self.last_update = datetime.now()
+        self.cooldown_timer = cooldown_timer
 
     def get_history(self) -> list[tuple[datetime, float, float, float, int, int]]:
         return (
@@ -279,6 +285,8 @@ def parse_account_state_page(page: Page, currency: str = "UNK") -> Optional[Acco
     Returns:
         AccountState: An AccountState object containing all parsed account information.
     """
+    flipclock_selector: str = "#faucet_countdown_clock .clock li.flip-clock-active"
+    time_remaining: Optional[str] = None
     try:
         balance_element: Optional[ElementHandle] = page.query_selector(selector="span[class=user_balance]")
         wagered_element: Optional[ElementHandle] = page.query_selector(selector="b[id=total_wagered]")
@@ -288,32 +296,41 @@ def parse_account_state_page(page: Page, currency: str = "UNK") -> Optional[Acco
         )
         free_spins_element: Optional[ElementHandle] = page.query_selector(selector="span[id=free_spins]")
 
-        # Wait for flipclock to be populated by JavaScript (max 3 seconds)
-        page.wait_for_selector("#faucet_countdown_clock .clock li.flip-clock-active", timeout=3000, state="attached")
+        flipclock_locator: Locator = page.locator(flipclock_selector)
 
-        # Query the flipclock digits from the live DOM
-        active_digits_elements = page.query_selector_all("#faucet_countdown_clock .clock li.flip-clock-active")
+        def parse_flipclock(page: Page, flipclock_selector: str) -> Optional[str]:
+            time_remaining = None
+            # Wait for flipclock to be populated by JavaScript (max 3 seconds)
+            page.wait_for_selector(flipclock_selector, timeout=3000, state="attached")
 
-        log.info("Found %d active digit elements from Page", len(active_digits_elements))
+            # Query the flipclock digits from the live DOM
+            active_digits_elements = page.query_selector_all(flipclock_selector)
 
-        if active_digits_elements and len(active_digits_elements) >= 4:
-            # Extract text from each digit element
-            digits_text = [elem.inner_text().strip() for elem in active_digits_elements[:4]]
-            log.info("Digit texts from Page: %s", digits_text)
+            log.info("Found %d active digit elements from Page", len(active_digits_elements))
 
-            try:
-                # Each element should contain a single digit
-                minute_tens = digits_text[0][0] if digits_text[0] else "0"
-                minute_ones = digits_text[1][0] if digits_text[1] else "0"
-                second_tens = digits_text[2][0] if digits_text[2] else "0"
-                second_ones = digits_text[3][0] if digits_text[3] else "0"
+            if active_digits_elements and len(active_digits_elements) >= 4:
+                # Extract text from each digit element
+                digits_text = [elem.inner_text().strip() for elem in active_digits_elements[:4]]
+                log.info("Digit texts from Page: %s", digits_text)
 
-                time_remaining = f"{minute_tens}{minute_ones}:{second_tens}{second_ones}"
-                log.info("Flipclock time remaining (from Page): %s (MM:SS)", time_remaining)
-            except (IndexError, AttributeError) as e:
-                log.warning("Failed to parse flipclock digits from Page: %s", e)
-        else:
-            log.info("No active flipclock found - faucet may be ready to claim")
+                try:
+                    # Each element should contain a single digit
+                    minute_tens = digits_text[0][0] if digits_text[0] else "0"
+                    minute_ones = digits_text[1][0] if digits_text[1] else "0"
+                    second_tens = digits_text[2][0] if digits_text[2] else "0"
+                    second_ones = digits_text[3][0] if digits_text[3] else "0"
+
+                    time_remaining = f"{minute_tens}{minute_ones}:{second_tens}{second_ones}"
+                    log.info("Flipclock time remaining (from Page): %s (MM:SS)", time_remaining)
+                except (IndexError, AttributeError) as e:
+                    log.warning("Failed to parse flipclock digits from Page: %s", e)
+            else:
+                log.info("No active flipclock found - faucet may be ready to claim")
+
+            return time_remaining
+
+        if flipclock_locator.count() >= 0:
+            time_remaining = parse_flipclock(page, flipclock_selector)
 
         balance_text = balance_element.text_content() if balance_element else "0.0"
         wagered_text = wagered_element.text_content() if wagered_element else "0.0"
@@ -656,6 +673,7 @@ def pick_to_dict_json_safe(pick_obj: Pick) -> Dict[str, Any]:
     Returns:
         Dict[str, Any]: The JSON-safe dict representation of the Pick object.
     """
+    # Skipping the cooldown timer on purpose here because it's an ephemeral attribute.
     data = {
         "url": pick_obj.url,
         "currency": pick_obj.currency,
@@ -669,6 +687,7 @@ def pick_to_dict_json_safe(pick_obj: Pick) -> Dict[str, Any]:
         "target": pick_obj.target,
         "remaining_claims": pick_obj.remaining_claims,
         "free_spins": pick_obj.free_spins,
+        # "cooldown_timer": pick_obj.cooldown_timer  <-- NO!
     }
     return data
 
@@ -752,8 +771,8 @@ def summarize_picks(picks: List[Pick]):
         picks (list[Pick]): List of Pick objects to summarize.
     """
     log.info(
-        "{: <21} | {: <8} | {: >15} | {: >15} | {: >15} | {: >15} | {: >8} | {: >8}".format(
-            "URL", "Currency", "Balance", "Wagered", "Target", "Diff", "Claims", "Spins"
+        "{: <21} | {: <8} | {: >15} | {: >15} | {: >15} | {: >15} | {: >8} | {: >12} | {: >15}".format(
+            "URL", "Currency", "Balance", "Wagered", "Target", "Diff", "Claims", "Bonus Spins", "Cooldown Timer"
         )
     )
     for pick in picks:
