@@ -180,6 +180,79 @@ class Pick:
             return Pick.from_dict(data)
 
 
+def get_balance(page: Page) -> float:
+    """Get the current balance from the page.
+
+    Args:
+        page (Page): The Playwright page object.
+    Returns:
+        float: The current balance.
+    """
+    balance_selector = "body > header > nav > div.navbar-header > div > div > span"
+    balance = 0.0
+
+    balance_element: Optional[ElementHandle] = page.query_selector(selector=balance_selector)
+
+    if balance_element:
+        balance_text = balance_element.text_content()
+        try:
+            balance = float(balance_text.strip().replace(",", "").strip())
+        except ValueError:
+            log.error("Could not parse balance: %s", balance_text)
+
+    return balance
+
+
+def bet_and_start_auto(page: Page, stop: bool = False) -> float:
+    """Stop any ongoing betting, rebet at 1/100 of balance, and start auto betting on the page.
+
+    Args:
+        page (Page): The Playwright page object.
+    """
+    balance = get_balance(page)
+    wager_amount = max(0.00000100, balance / 100.0)  # Bet 1/100th of balance or 0.00000100, whichever is greater
+
+    if stop:
+        page.click("#stop_autobet", delay=gaussian_random_delay())
+    page.fill("#bet_amount", str(format(wager_amount, ".8f")))
+    page.click("#hard", delay=gaussian_random_delay(), force=True)
+    page.check("#switch_bet_mode", force=True)
+    page.click("#start_autobet", delay=gaussian_random_delay(), force=True)
+
+    return wager_amount
+
+
+def play_keno(page: Page) -> None:
+    """Play keno game on pick sites."""
+
+    # generate 7 random picks between 1 and 40
+    picks = random.sample(range(1, 41), 7)
+    board_selector = "#keno_table > div.keno_gamecell > div.keno_gamecell_index"
+
+    for pick in picks:
+        page.locator(board_selector).filter(has_text="{}".format(pick)).first.click(
+            delay=gaussian_random_delay(), timeout=3000
+        )
+
+    wager_amount = bet_and_start_auto(page)
+
+    # Loop every 5 seconds and check balance
+    while True:
+        balance = get_balance(page)
+        log.info("Current balance: %f", balance)
+        if (balance < wager_amount * 50) or (balance > wager_amount * 150):
+            log.info("Rebetting due to balance change.")
+            wager_amount = bet_and_start_auto(page, stop=True)
+        elif (balance < wager_amount * 20) or (balance > wager_amount * 1000):
+            log.info("Insufficient balance to continue playing keno.")
+            page.close()
+            break
+
+        page.wait_for_timeout(5000)  # Wait for 5 seconds to let the game play out
+
+    log.info("Keno game ended.")
+
+
 def default_picks() -> list[Pick]:
     """Return the default list of Pick objects.
     Returns:
@@ -786,6 +859,7 @@ def main(
     user_data_dir: str | None = None,
     headless: bool = False,
     skip_claim: bool = False,
+    play_keno: bool = False,
     summarize: bool = False,
 ):
     """
@@ -797,6 +871,7 @@ def main(
         user_data_dir (str | None, optional): Path to user data directory. Defaults to None.
         headless (bool, optional): Whether to run in headless mode. Defaults to False.
         skip_claim (bool, optional): Whether to skip the claim step. Defaults to False.
+        play_keno (bool, optional): Whether to play keno after claiming. Defaults to False.
         summarize (bool, optional): Whether to summarize the results. Defaults to False.
 
     Returns:
@@ -854,20 +929,17 @@ def main(
                     log.info("Skipping claim - already attempted during login (user was already logged in)")
                     continue
 
-                # if account_state.time_remaining is not None and account_state.time_remaining > "00:00":
-                #     log.info("Time remaining until claim available, skipping...: %s", account_state.time_remaining)
-                #     continue  # Skip to next pick if countdown is active
-
                 faucet = make_claim_faucet(button_selector, currency=pick.currency)
                 _: Response = session.fetch(f"{pick.url}faucet.php", page_action=faucet, wait=5000, timeout=30000)
 
+                log.info("About to play keno on %s", pick.url)
                 # Check if Response object has a page attribute
-                # page_obj = getattr(faucet_response, "page", None) or getattr(faucet_response, "_page", None)
-                # log.info("Page object found in faucet_response: %s", page_obj is not None)
-                # account_state = parse_account_state(faucet_response, currency=pick.currency, page=page_obj)
-                # pick.update(account_state=account_state)
+                if play_keno:
+                    _: Response = session.fetch(
+                        f"{pick.url}keno.php", page_action=play_keno, timeout=0, solve_cloudflare=False
+                    )
 
-                # log.info("%s", pick)
+                log.info("Finished processing %s", pick.url)
 
             except Exception as e:
                 log.error("Error fetching %s: %s", pick.url, e)
@@ -917,6 +989,11 @@ if __name__ == "__main__":
         help="skip claiming the faucet (just login and get balance)",
     )
     parser.add_argument("--summarize", help="summarize the results", action="store_true")
+    parser.add_argument(
+        "--play-keno",
+        help="play keno game after claiming the faucet",
+        action="store_true",
+    )
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--skip", help="List of picks by currency to skip", nargs="+", default=[])
     group.add_argument("--only", help="List of picks by currency to run only", nargs="+", default=[])
@@ -936,5 +1013,6 @@ if __name__ == "__main__":
         args.user_data_dir,
         args.headless,
         args.skip_claim,
+        args.play_keno,
         args.summarize,
     )

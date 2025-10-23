@@ -56,7 +56,8 @@ make_mtb_action = make_mtb_action_factory(
     sweeps_coins_selectors=sweeps_coins_selectors,
     gold_coins_selectors=gold_coins_selectors,
     close_selectors=close_selectors,
-    currency_toggle_selector=currency_toggle_selector,
+    currency_toggle_dropdown_selector=currency_toggle_selector,
+    currency_toggle_switch_selector=None,
 )
 
 sys.path.append(".")

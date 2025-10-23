@@ -27,11 +27,37 @@ class CasinoAccountState:
         return f"SC: {self.sweeps_coins:.2f}, GC: {self.gold_coins:.2f}, VIP: {self.vip_level}"
 
 
+class Currency:
+    """Represents a currency with its associated selectors."""
+
+    def __init__(
+        self,
+        name: str,
+        code: str,
+        selectors: List[str],
+    ):
+        self.name = name
+        self.code = code
+        self.selectors = selectors
+
+
+class CurrencyDisplayConfig:
+    """Configuration for currency selectors."""
+
+    def __init__(
+        self,
+        currencies: List[Currency],
+        currency_toggle_dropdown_selector: Optional[str] = None,
+        currency_toggle_switch_selector: Optional[str] = None,
+    ):
+        self.currencies = currencies
+        self.currency_toggle_dropdown_selector = currency_toggle_dropdown_selector
+        self.currency_toggle_switch_selector = currency_toggle_switch_selector
+
+
 def make_get_casino_account_state(
     page: Page,
-    sweeps_coins_selectors: List[str],
-    gold_coins_selectors: List[str],
-    currency_toggle_selector: Optional[str],
+    currency_display_config: CurrencyDisplayConfig,
 ) -> callable:
     """makes a function for getting the account state via a closure."""
 
@@ -47,7 +73,11 @@ def make_get_casino_account_state(
             CasinoAccountState: An object containing all parsed account information.
         """
         # Click to open the dropdown.
-        page.click(currency_toggle_selector, delay=gaussian_random_delay())
+        if currency_display_config.currency_toggle_dropdown_selector:
+            page.click(
+                currency_display_config.currency_toggle_dropdown_selector,
+                delay=gaussian_random_delay(),
+            )
 
         sweeps_coins = 0.0
         gold_coins = 0.0
@@ -55,43 +85,40 @@ def make_get_casino_account_state(
         vip_progress = None
 
         # Try to parse Stake Cash balance
-        for selector in sweeps_coins_selectors:
-            try:
-                element_selector = page.locator(selector)
-                if element_selector.count() > 0:
-                    text = element_selector.first.text_content().strip()
-                    # Remove currency symbols and parse
-                    text = text.replace("SC", "").replace(",", "").strip()
-                    try:
-                        sweeps_coins = float(text)
-                        log.info(f"Found Stake Cash balance: {sweeps_coins}")
-                        break
-                    except ValueError:
-                        continue
-            except Exception as e:
-                log.debug(f"Selector {selector} failed for SC: {e}")
-                continue
-
-        # Try to parse Gold Coins balance
-        for selector in gold_coins_selectors:
-            try:
-                element_selector = page.locator(selector)
-                if element_selector.count() > 0:
-                    text = element_selector.first.text_content().strip()
-                    # Remove currency symbols and parse
-                    text = text.replace("GC", "").replace(",", "").strip()
-                    try:
-                        gold_coins = float(text)
-                        log.info(f"Found Gold Coins balance: {gold_coins}")
-                        break
-                    except ValueError:
-                        continue
-            except Exception as e:
-                log.debug(f"Selector {selector} failed for GC: {e}")
-                continue
+        for currency in currency_display_config.currencies:
+            for selector in currency.selectors:
+                try:
+                    element_selector = page.locator(selector)
+                    if element_selector.count() > 0:
+                        text = element_selector.first.text_content().strip()
+                        # Remove currency symbols and parse
+                        text = text.replace(currency.code, "").replace(",", "").strip()
+                        try:
+                            n = float(text)
+                            log.info(f"Found {currency.name} balance: {n}")
+                            if currency.code == "SC":
+                                sweeps_coins = n
+                            elif currency.code == "GC":
+                                gold_coins = n
+                            break
+                        except ValueError:
+                            continue
+                except Exception as e:
+                    log.debug(f"Selector {selector} failed for {currency.name}: {e}")
+                    continue
+            if currency_display_config.currency_toggle_switch_selector:
+                # Switch to next currency in dropdown
+                page.click(
+                    currency_display_config.currency_toggle_switch_selector,
+                    delay=gaussian_random_delay(),
+                )
 
         # Click again to close the dropdown
-        page.click(currency_toggle_selector, delay=gaussian_random_delay())
+        if currency_display_config.currency_toggle_dropdown_selector:
+            page.click(
+                currency_display_config.currency_toggle_dropdown_selector,
+                delay=gaussian_random_delay(),
+            )
 
         return CasinoAccountState(
             sweeps_coins=sweeps_coins,
@@ -99,6 +126,7 @@ def make_get_casino_account_state(
             vip_level=vip_level,
             vip_progress=vip_progress,
         )
+
     return get_casino_account_state
 
 
@@ -168,7 +196,7 @@ def wait_for_load_all_safe(page: Page, timeout: int = 500) -> None:
         # Which should be considered the most likely case.
         try:
             page.wait_for_load_state("networkidle", timeout=timeout)
-        except PlaywrightError:
+        except PlaywrightError as _:
             # Sometimes networkidle doesn't happen, ignore
             pass
     except PlaywrightError as e:
@@ -238,7 +266,8 @@ def make_mtb_action_factory(
     sweeps_coins_selectors: str,
     gold_coins_selectors: str,
     close_selectors: List[str],
-    currency_toggle_selector: Optional[str],
+    currency_toggle_dropdown_selector: Optional[str],
+    currency_toggle_switch_selector: Optional[str],
     # make_claim_daily_bonus (defaults for stake.us)
     wallet_btn_selector: str = 'button[data-testid="wallet"], button[data-analytics="global-navbar-wallet-button"]',
     daily_bonus_btn_selector: str = 'button[data-testid="dailyBonus"]',
@@ -272,6 +301,9 @@ def make_mtb_action_factory(
                 log.error("Error during login: %s", str(e))
                 raise e
 
+            # Wait for navigation to complete
+            wait_for_load_all_safe(page)
+
             # Handle TOTP 2FA if applicable
             if totp_secret:
                 try:
@@ -287,8 +319,17 @@ def make_mtb_action_factory(
             wait_for_load_all_safe(page)
 
             # Check the login was successful and get balances
+            currency_display_config = CurrencyDisplayConfig(
+                currencies=[
+                    Currency(name="Sweeps Coins", code="SC", selectors=sweeps_coins_selectors),
+                    Currency(name="Gold Coins", code="GC", selectors=gold_coins_selectors),
+                ],
+                currency_toggle_dropdown_selector=currency_toggle_dropdown_selector,
+                currency_toggle_switch_selector=currency_toggle_switch_selector,
+            )
             get_casino_account_state = make_get_casino_account_state(
-                page, sweeps_coins_selectors, gold_coins_selectors, currency_toggle_selector
+                page,
+                currency_display_config,
             )
             casino_account_state: CasinoAccountState = get_casino_account_state(page)
             log.info("Login successful. Account State: %s", casino_account_state)

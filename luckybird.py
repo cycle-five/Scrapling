@@ -1,8 +1,9 @@
 from argparse import ArgumentParser
-from typing import Optional, Callable, List
+from typing import Optional, Callable, List, Dict
 import sys
 import os
 import pyotp
+import re
 
 sys.path.append(".")
 
@@ -41,7 +42,12 @@ close_selectors = [
 main_enabled_selector = "section.dailyBonus_page button.el-button--primary:enabled"
 buy_btn_selector = "li.tw-hidden:nth-child(2) > p:nth-child(1)"
 daily_bonus_tab_selector = ".tw-self-center > div:nth-child(1) > div:nth-child(1) > div:nth-child(5)"
-claim_daily_bonus_selector = "button:has-text('Claim')"
+claim_daily_bonus_selector = "button.el-button--primary:not(.is-disabled)"
+claim_daily_bonus_disabled_selector = "button.el-button--primary:is-disabled"
+
+# Balance selectors - update sweeps_coins_selector once you identify the correct class
+gold_coins_selector = ".gold_color .amount"
+sweeps_coins_selector = ".sweeps_color .amount, .sc_color .amount, [class*='sweeps'] .amount"
 
 
 def luckybird_mtb(page: Page) -> bool:
@@ -55,15 +61,19 @@ def luckybird_mtb(page: Page) -> bool:
     try:
         log.info("Navigating to MTB section...")
         page.click(buy_btn_selector, delay=gaussian_random_delay(), timeout=3000)
-        # wait_for_load_all_safe(page)
+        wait_for_load_all_safe(page)
 
         log.info("Clicking on Daily Bonus tab...")
         page.click(daily_bonus_tab_selector, delay=gaussian_random_delay(), timeout=3000)
-        # wait_for_load_all_safe(page)
+        wait_for_load_all_safe(page, timeout=3000)
 
         log.info("Clicking on Claim Daily Bonus button...")
+        page.locator(claim_daily_bonus_disabled_selector)
+        if page.locator(claim_daily_bonus_disabled_selector).count() > 0:
+            log.info("Daily bonus already claimed or not available.")
+            return False
         page.click(claim_daily_bonus_selector, delay=gaussian_random_delay(), timeout=3000)
-        # wait_for_load_all_safe(page)
+        wait_for_load_all_safe(page)
 
         log.info("Successfully claimed daily bonus from MTB section!")
         return True
@@ -125,6 +135,88 @@ def luckybird_daily_initial_popups(page: Page) -> bool:
     except PlaywrightError:
         pass
 
+def parse_coin_balances(page: Page) -> Dict[str, Optional[float]]:
+    """Parse gold and sweeps coins balances from the LuckyBird page.
+
+    The page toggles between showing GC (Gold Coins) and SC (Sweeps Coins).
+    This function clicks to switch between them and captures both values.
+
+    Args:
+        page: The Playwright Page object
+
+    Returns:
+        Dict with 'gold_coins' and 'sweeps_coins' keys containing float values or None if not found
+    """
+    balances = {"gold_coins": None, "sweeps_coins": None}
+
+    # Pattern to extract numeric values (handles formats like "1,234.56" or "1234.56")
+    number_pattern = re.compile(r"[\d,]+\.?\d*")
+
+    # Currency switcher selector
+    currency_switcher_selector = ".tw-currency-img-new"
+    active_amount_selector = ".currency-active .amount"
+
+    try:
+        # First, get the currently active currency amount
+        active_element = page.locator(active_amount_selector).first
+        if active_element.count() > 0:
+            text = active_element.text_content()
+            if text:
+                match = number_pattern.search(text)
+                if match:
+                    value_str = match.group().replace(",", "")
+                    first_value = float(value_str)
+
+                    # Determine which currency is currently active
+                    gold_active = page.locator(".gold_color.currency-active").count() > 0
+
+                    if gold_active:
+                        balances["gold_coins"] = first_value
+                        log.info("Found Gold Coins balance: %s", balances["gold_coins"])
+                    else:
+                        balances["sweeps_coins"] = first_value
+                        log.info("Found Sweeps Coins balance: %s", balances["sweeps_coins"])
+
+        # Now click to toggle to the other currency
+        try:
+            # Click on the currency switcher area
+            switcher = page.locator(currency_switcher_selector).first
+            switcher.click(delay=gaussian_random_delay(), timeout=3000)
+
+            # Wait a moment for the toggle
+            page.wait_for_timeout(500)
+
+            # Get the newly active currency amount
+            active_element = page.locator(active_amount_selector).first
+            if active_element.count() > 0:
+                text = active_element.text_content()
+                if text:
+                    match = number_pattern.search(text)
+                    if match:
+                        value_str = match.group().replace(",", "")
+                        second_value = float(value_str)
+
+                        # Determine which currency is now active
+                        gold_active = page.locator(".gold_color.currency-active").count() > 0
+
+                        if gold_active:
+                            balances["gold_coins"] = second_value
+                            log.info("Found Gold Coins balance: %s", balances["gold_coins"])
+                        else:
+                            balances["sweeps_coins"] = second_value
+                            log.info("Found Sweeps Coins balance: %s", balances["sweeps_coins"])
+
+            # Optional: Click again to restore original currency display
+            switcher.click(delay=gaussian_random_delay(), timeout=3000)
+
+        except Exception as e:
+            log.warning("Error toggling currency display: %s", str(e))
+
+    except Exception as e:
+        log.error("Error parsing coin balances: %s", str(e))
+
+    return balances
+
 
 def make_luckybird_action(
     # close initial pops
@@ -181,6 +273,14 @@ def make_luckybird_action(
         # Wait for navigation to complete
         wait_for_load_all_safe(page)
         log.info("Successfully logged into LuckyBird.io")
+
+        # Parse and log current coin balances
+        balances = parse_coin_balances(page)
+        log.info(
+            "Current balances - Gold Coins: %s, Sweeps Coins: %s",
+            balances["gold_coins"],
+            balances["sweeps_coins"],
+        )
 
         # Claim the daily bonus
         if not skip_claim:
