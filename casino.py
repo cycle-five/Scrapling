@@ -55,8 +55,16 @@ class CurrencyDisplayConfig:
         self.currency_toggle_switch_selector = currency_toggle_switch_selector
 
 
+close_selectors = [
+    "#close",
+    "div#close",
+    "[aria-label='Close']",
+    "button[aria-label='Close']",
+    ".close",
+]
+
+
 def make_get_casino_account_state(
-    page: Page,
     currency_display_config: CurrencyDisplayConfig,
 ) -> callable:
     """makes a function for getting the account state via a closure."""
@@ -203,17 +211,30 @@ def wait_for_load_all_safe(page: Page, timeout: int = 500) -> None:
         log.warning("Page did not fully load within timeout: %s", str(e))
 
 
-def make_claim_daily_bonus(
-    wallet_btn_selector='button[data-testid="wallet"], button[data-analytics="global-navbar-wallet-button"]',
-    daily_bonus_btn_selector='button[data-testid="dailyBonus"]',
-    claim_btn_selector="button.justify-center:nth-child(4)",
+def make_modal_tab_button(
+    # modal selector, usually wallet button
+    modal_selector='button[data-testid="wallet"], button[data-analytics="global-navbar-wallet-button"]',
+    # tab selector, usually daily bonus button
+    tab_selector='button[data-testid="dailyBonus"]',
+    # button selector, usually claim button
+    btn_selector="button.justify-center:nth-child(4)",
+    # close modal selector
     close_btn_selector='button[data-testid="modal-close"]',
 ) -> Callable[[Page], None]:
+    """Generator for claiming daily bonus via modal, tab, button pattern.
+    Args:
+        modal_selector (str): Selector for the modal open button.
+        tab_selector (str): Selector for the tab button inside the modal.
+        btn_selector (str): Selector for the claim button.
+        close_btn_selector (str): Selector for the modal close button.
+    Returns:
+        Callable[[Page], None]: A function that performs the daily bonus claim action on the given page.
+    """
     log.debug(
         "selectors: %s, %s, %s, %s",
-        wallet_btn_selector,
-        daily_bonus_btn_selector,
-        claim_btn_selector,
+        modal_selector,
+        tab_selector,
+        btn_selector,
         close_btn_selector,
     )
 
@@ -226,9 +247,9 @@ def make_claim_daily_bonus(
         """
 
         try:
-            page.click(wallet_btn_selector, delay=gaussian_random_delay(), timeout=5000)
-            page.click(daily_bonus_btn_selector, delay=gaussian_random_delay(), timeout=5000)
-            claim_btn = page.locator(claim_btn_selector)
+            page.click(modal_selector, delay=gaussian_random_delay(), timeout=5000)
+            page.click(tab_selector, delay=gaussian_random_delay(), timeout=5000)
+            claim_btn = page.locator(btn_selector)
             if claim_btn.is_disabled():
                 log.info("Daily bonus already claimed.")
             else:
@@ -258,23 +279,23 @@ def make_claim_daily_bonus(
 # User Interaction
 # Affect Effected
 #
-def make_mtb_action_factory(
+def make_login_action_factory(
     username_selector: str,
     password_selector: str,
     login_submit_selector: str,
     totp_code_selector: str,
-    sweeps_coins_selectors: str,
-    gold_coins_selectors: str,
-    close_selectors: List[str],
-    currency_toggle_dropdown_selector: Optional[str],
-    currency_toggle_switch_selector: Optional[str],
-    # make_claim_daily_bonus (defaults for stake.us)
-    wallet_btn_selector: str = 'button[data-testid="wallet"], button[data-analytics="global-navbar-wallet-button"]',
-    daily_bonus_btn_selector: str = 'button[data-testid="dailyBonus"]',
-    claim_btn_selector: str = "button.justify-center:nth-child(4)",
-    close_btn_selector: str = 'button[data-testid="modal-close"]',
+    # sweeps_coins_selectors: str,
+    # gold_coins_selectors: str,
+    # close_selectors: List[str],
+    # currency_toggle_dropdown_selector: Optional[str],
+    # currency_toggle_switch_selector: Optional[str],
+    # # make_claim_daily_bonus (defaults for stake.us)
+    # wallet_btn_selector: str = 'button[data-testid="wallet"], button[data-analytics="global-navbar-wallet-button"]',
+    # daily_bonus_btn_selector: str = 'button[data-testid="dailyBonus"]',
+    # claim_btn_selector: str = "button.justify-center:nth-child(4)",
+    # close_btn_selector: str = 'button[data-testid="modal-close"]',
 ) -> Callable[[str, str, Optional[str]], None]:
-    def make_mtb_action(username: str, password: str, totp_secret: Optional[str]) -> Callable[[Page], None]:
+    def login_action_factory(username: str, password: str, totp_secret: Optional[str]) -> Callable[[Page], None]:
         """Create a login page action.
 
         Args:
@@ -286,7 +307,7 @@ def make_mtb_action_factory(
             Callable[[Page], None]: A function that performs the login action on the given page.
         """
 
-        def mtb_action(page: Page):
+        def login_action(page: Page):
             # Initial page load handling popups / etc
             handle_google_one_tap_popup = make_handle_google_one_tap_popup(close_selectors)
             handle_google_one_tap_popup(page)
@@ -318,32 +339,32 @@ def make_mtb_action_factory(
             # Wait for navigation to complete
             wait_for_load_all_safe(page)
 
-            # Check the login was successful and get balances
-            currency_display_config = CurrencyDisplayConfig(
-                currencies=[
-                    Currency(name="Sweeps Coins", code="SC", selectors=sweeps_coins_selectors),
-                    Currency(name="Gold Coins", code="GC", selectors=gold_coins_selectors),
-                ],
-                currency_toggle_dropdown_selector=currency_toggle_dropdown_selector,
-                currency_toggle_switch_selector=currency_toggle_switch_selector,
-            )
-            get_casino_account_state = make_get_casino_account_state(
-                page,
-                currency_display_config,
-            )
-            casino_account_state: CasinoAccountState = get_casino_account_state(page)
-            log.info("Login successful. Account State: %s", casino_account_state)
+        #     # Check the login was successful and get balances
+        #     currency_display_config = CurrencyDisplayConfig(
+        #         currencies=[
+        #             Currency(name="Sweeps Coins", code="SC", selectors=sweeps_coins_selectors),
+        #             Currency(name="Gold Coins", code="GC", selectors=gold_coins_selectors),
+        #         ],
+        #         currency_toggle_dropdown_selector=currency_toggle_dropdown_selector,
+        #         currency_toggle_switch_selector=currency_toggle_switch_selector,
+        #     )
+        #     get_casino_account_state = make_get_casino_account_state(
+        #         page,
+        #         currency_display_config,
+        #     )
+        #     casino_account_state: CasinoAccountState = get_casino_account_state(page)
+        #     log.info("Login successful. Account State: %s", casino_account_state)
 
-            make_claim_daily_bonus(
-                wallet_btn_selector=wallet_btn_selector,
-                daily_bonus_btn_selector=daily_bonus_btn_selector,
-                claim_btn_selector=claim_btn_selector,
-                close_btn_selector=close_btn_selector,
-            )(page)
+        #     make_modal_tab_button(
+        #         modal_selector=wallet_btn_selector,
+        #         tab_selector=daily_bonus_btn_selector,
+        #         btn_selector=claim_btn_selector,
+        #         close_btn_selector=close_btn_selector,
+        #     )(page)
 
-        return mtb_action
+        return login_action
 
-    return make_mtb_action
+    return login_action_factory
 
 
 # def main(proxy: Optional[str], google_oauth: bool = False, user_data_dir: Optional[str] = None)

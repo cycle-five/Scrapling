@@ -58,28 +58,37 @@ def luckybird_mtb(page: Page) -> bool:
     Returns:
         bool: True if claim was successful, False otherwise
     """
-    try:
-        log.info("Navigating to MTB section...")
-        page.click(buy_btn_selector, delay=gaussian_random_delay(), timeout=3000)
-        wait_for_load_all_safe(page)
+    from casino import make_modal_tab_button
 
-        log.info("Clicking on Daily Bonus tab...")
-        page.click(daily_bonus_tab_selector, delay=gaussian_random_delay(), timeout=3000)
-        wait_for_load_all_safe(page, timeout=3000)
+    mtb = make_modal_tab_button(
+        modal_selector=buy_btn_selector,
+        tab_selector=daily_bonus_tab_selector,
+        btn_selector=claim_daily_bonus_selector,
+        close_btn_selector=",".join(close_selectors),
+    )
+    mtb(page)
+    # try:
+    #     log.info("Navigating to MTB section...")
+    #     page.click(buy_btn_selector, delay=gaussian_random_delay(), timeout=3000)
+    #     wait_for_load_all_safe(page)
 
-        log.info("Clicking on Claim Daily Bonus button...")
-        page.locator(claim_daily_bonus_disabled_selector)
-        if page.locator(claim_daily_bonus_disabled_selector).count() > 0:
-            log.info("Daily bonus already claimed or not available.")
-            return False
-        page.click(claim_daily_bonus_selector, delay=gaussian_random_delay(), timeout=3000)
-        wait_for_load_all_safe(page)
+    #     log.info("Clicking on Daily Bonus tab...")
+    #     page.click(daily_bonus_tab_selector, delay=gaussian_random_delay(), timeout=3000)
+    #     wait_for_load_all_safe(page, timeout=3000)
 
-        log.info("Successfully claimed daily bonus from MTB section!")
-        return True
-    except (PlaywrightError, TimeoutError, TargetClosedError) as e:
-        log.error("Error during MTB daily bonus claim: %s", str(e))
-        return False
+    #     log.info("Clicking on Claim Daily Bonus button...")
+    #     page.locator(claim_daily_bonus_disabled_selector)
+    #     if page.locator(claim_daily_bonus_disabled_selector).count() > 0:
+    #         log.info("Daily bonus already claimed or not available.")
+    #         return False
+    #     page.click(claim_daily_bonus_selector, delay=gaussian_random_delay(), timeout=3000)
+    #     wait_for_load_all_safe(page)
+
+    #     log.info("Successfully claimed daily bonus from MTB section!")
+    #     return True
+    # except (PlaywrightError, TimeoutError, TargetClosedError) as e:
+    #     log.error("Error during MTB daily bonus claim: %s", str(e))
+    #     return False
 
 
 def luckybird_daily_initial_popups(page: Page) -> bool:
@@ -115,7 +124,7 @@ def luckybird_daily_initial_popups(page: Page) -> bool:
 
             # Click the first available claim button
             log.info("Found enabled button, clicking...")
-            enabled_buttons.first.click(delay=gaussian_random_delay(), timeout=5000)
+            enabled_buttons.first.click(delay=gaussian_random_delay(), timeout=5000, force=True)
 
             enabled_buttons: Locator = page.locator(main_enabled_selector)
         # Wait for the claim to process
@@ -134,6 +143,7 @@ def luckybird_daily_initial_popups(page: Page) -> bool:
             log.info("Closed daily bonus modal")
     except PlaywrightError:
         pass
+
 
 def parse_coin_balances(page: Page) -> Dict[str, Optional[float]]:
     """Parse gold and sweeps coins balances from the LuckyBird page.
