@@ -284,16 +284,6 @@ def make_login_action_factory(
     password_selector: str,
     login_submit_selector: str,
     totp_code_selector: str,
-    # sweeps_coins_selectors: str,
-    # gold_coins_selectors: str,
-    # close_selectors: List[str],
-    # currency_toggle_dropdown_selector: Optional[str],
-    # currency_toggle_switch_selector: Optional[str],
-    # # make_claim_daily_bonus (defaults for stake.us)
-    # wallet_btn_selector: str = 'button[data-testid="wallet"], button[data-analytics="global-navbar-wallet-button"]',
-    # daily_bonus_btn_selector: str = 'button[data-testid="dailyBonus"]',
-    # claim_btn_selector: str = "button.justify-center:nth-child(4)",
-    # close_btn_selector: str = 'button[data-testid="modal-close"]',
 ) -> Callable[[str, str, Optional[str]], None]:
     def login_action_factory(username: str, password: str, totp_secret: Optional[str]) -> Callable[[Page], None]:
         """Create a login page action.
@@ -339,70 +329,6 @@ def make_login_action_factory(
             # Wait for navigation to complete
             wait_for_load_all_safe(page)
 
-        #     # Check the login was successful and get balances
-        #     currency_display_config = CurrencyDisplayConfig(
-        #         currencies=[
-        #             Currency(name="Sweeps Coins", code="SC", selectors=sweeps_coins_selectors),
-        #             Currency(name="Gold Coins", code="GC", selectors=gold_coins_selectors),
-        #         ],
-        #         currency_toggle_dropdown_selector=currency_toggle_dropdown_selector,
-        #         currency_toggle_switch_selector=currency_toggle_switch_selector,
-        #     )
-        #     get_casino_account_state = make_get_casino_account_state(
-        #         page,
-        #         currency_display_config,
-        #     )
-        #     casino_account_state: CasinoAccountState = get_casino_account_state(page)
-        #     log.info("Login successful. Account State: %s", casino_account_state)
-
-        #     make_modal_tab_button(
-        #         modal_selector=wallet_btn_selector,
-        #         tab_selector=daily_bonus_btn_selector,
-        #         btn_selector=claim_btn_selector,
-        #         close_btn_selector=close_btn_selector,
-        #     )(page)
-
         return login_action
 
     return login_action_factory
-
-
-# def main(proxy: Optional[str], google_oauth: bool = False, user_data_dir: Optional[str] = None)
-#     username, password = get_credentials("https://stake.us")
-#     totp_secret = os.getenv("STAKE_2FA")  # Replace with actual TOTP secret if available
-#     action_args = {"username": username, "password": password, "totp_secret": totp_secret}
-#     make_mtb_action = make_mtb_action_factory()
-
-#     additional_args = {}
-#     if user_data_dir is not None:
-#         additional_args["user_data_dir"] = user_data_dir
-
-#     with StealthySession(
-#         proxy=proxy,
-#         headless=False,
-#         humanize=True,
-#         load_dom=True,
-#         google_search=False,
-#         additional_args=additional_args,
-#     ) as session:
-#         _: Response = session.fetch(
-#             login_url,
-#             page_action=make_mtb_action(**action_args),
-#             wait=5000,
-#         )
-
-
-# if __name__ == "__main__":
-#     parser = ArgumentParser()
-#     parser.add_argument("--proxy", help="proxy url to use", default=None)
-#     parser.add_argument(
-#         "--google-oauth",
-#         action="store_true",
-#         help="use Google OAuth login instead of username/password",
-#     )
-#     parser.add_argument(
-#         "--user-data-dir", type=str, help="Path to user data directory for browser session", default=None
-#     )
-#     args = parser.parse_args()
-
-#     main(**vars(args))

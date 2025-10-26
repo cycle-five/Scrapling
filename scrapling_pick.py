@@ -20,6 +20,12 @@ PICKS: List["Pick"] = []
 box_selector = "div #cf_turnstile"
 button_selector = "button[id='process_claim_hourly_faucet']"
 
+# Timeout configuration constants
+CLICK_TIMEOUT_MS = 5000  # Default timeout for click operations
+MAX_CLICK_RETRIES = 3  # Maximum number of retry attempts for failed clicks
+HANG_DETECTION_SECONDS = 30  # Seconds without balance change before detecting hang
+MAX_KENO_ITERATIONS = 1000  # Maximum iterations in gambling loop as safety net
+
 T = TypeVar("T")
 
 
@@ -203,49 +209,134 @@ def get_balance(page: Page) -> float:
     return balance
 
 
-def bet_and_start_auto(page: Page, stop: bool = False) -> float:
+def bet_and_start_auto(page: Page, stop: bool = False) -> Optional[float]:
     """Stop any ongoing betting, rebet at 1/100 of balance, and start auto betting on the page.
 
     Args:
         page (Page): The Playwright page object.
+        stop (bool, optional): Whether to stop existing autobet first. Defaults to False.
+
+    Returns:
+        Optional[float]: The wager amount if successful, None if any operation failed.
     """
-    balance = get_balance(page)
-    wager_amount = max(0.00000100, balance / 100.0)  # Bet 1/100th of balance or 0.00000100, whichever is greater
+    try:
+        balance = get_balance(page)
+        wager_amount = max(0.00000100, balance / 100.0)  # Bet 1/100th of balance or 0.00000100, whichever is greater
 
-    if stop:
-        page.click("#stop_autobet", delay=gaussian_random_delay())
-    page.fill("#bet_amount", str(format(wager_amount, ".8f")))
-    page.click("#hard", delay=gaussian_random_delay(), force=True)
-    page.check("#switch_bet_mode", force=True)
-    page.click("#start_autobet", delay=gaussian_random_delay(), force=True)
+        # Stop existing autobet if requested
+        if stop:
+            if not safe_click(page, "#stop_autobet", timeout=CLICK_TIMEOUT_MS):
+                log.error("Failed to stop autobet")
+                return None
 
-    return wager_amount
+        # Fill in bet amount
+        try:
+            page.fill("#bet_amount", str(format(wager_amount, ".8f")), timeout=CLICK_TIMEOUT_MS)
+        except Exception as e:
+            log.error("Failed to fill bet amount: %s", e)
+            return None
+
+        # Click the difficulty selector (hard mode)
+        if not safe_click(page, "#hard", timeout=CLICK_TIMEOUT_MS, force=True):
+            log.error("Failed to click hard mode selector")
+            return None
+
+        # Enable autobet mode switch
+        try:
+            page.check("#switch_bet_mode", force=True, timeout=CLICK_TIMEOUT_MS)
+        except Exception as e:
+            log.error("Failed to enable autobet mode switch: %s", e)
+            return None
+
+        # Start autobet
+        if not safe_click(page, "#start_autobet", timeout=CLICK_TIMEOUT_MS, force=True):
+            log.error("Failed to start autobet")
+            return None
+
+        log.info("Successfully started autobet with wager amount: %f", wager_amount)
+        return wager_amount
+
+    except Exception as e:
+        log.error("Unexpected error in bet_and_start_auto: %s", e)
+        return None
 
 
-def play_keno(page: Page) -> None:
-    """Play keno game on pick sites."""
+def play_keno_func(page: Page) -> None:
+    """Play keno game on pick sites with hang detection."""
 
     # generate 7 random picks between 1 and 40
     picks = random.sample(range(1, 41), 7)
     board_selector = "#keno_table > div.keno_gamecell > div.keno_gamecell_index"
 
+    # Select keno board picks with timeout handling
     for pick in picks:
-        page.locator(board_selector).filter(has_text="{}".format(pick)).first.click(
-            delay=gaussian_random_delay(), timeout=3000
-        )
+        try:
+            page.locator(board_selector).filter(has_text="{}".format(pick)).first.click(
+                delay=gaussian_random_delay(), timeout=CLICK_TIMEOUT_MS
+            )
+        except Exception as e:
+            log.error("Failed to click keno pick %d: %s", pick, e)
+            return
 
+    # Start autobet with timeout handling
     wager_amount = bet_and_start_auto(page)
+    if wager_amount is None:
+        log.error("Failed to start autobet, exiting keno game")
+        return
+
+    # Initialize hang detection variables
+    last_balance = get_balance(page)
+    last_balance_change_time = time.time()
+    iteration_count = 0
 
     # Loop every 5 seconds and check balance
     while True:
+        iteration_count += 1
+
+        # Safety net: exit after maximum iterations
+        if iteration_count > MAX_KENO_ITERATIONS:
+            log.warning("Reached maximum iterations (%d), exiting keno game", MAX_KENO_ITERATIONS)
+            break
+
         balance = get_balance(page)
-        log.info("Current balance: %f", balance)
+        current_time = time.time()
+
+        # Check if balance has changed (indicating game is still running)
+        if balance != last_balance:
+            last_balance = balance
+            last_balance_change_time = current_time
+            log.info("Current balance: %f", balance)
+        else:
+            # Check if we've been stuck too long
+            time_since_change = current_time - last_balance_change_time
+            if time_since_change > HANG_DETECTION_SECONDS:
+                log.error(
+                    "Balance unchanged for %d seconds (balance: %f), detected hang - exiting",
+                    int(time_since_change),
+                    balance
+                )
+                break
+
+        # Check if we need to rebet due to balance change
         if (balance < wager_amount * 50) or (balance > wager_amount * 150):
             log.info("Rebetting due to balance change.")
-            wager_amount = bet_and_start_auto(page, stop=True)
+            new_wager = bet_and_start_auto(page, stop=True)
+            if new_wager is None:
+                log.error("Failed to rebet, exiting keno game")
+                break
+            wager_amount = new_wager
+            # Reset hang detection after successful rebet
+            last_balance = balance
+            last_balance_change_time = time.time()
+
+        # Check if balance is outside acceptable range (too low or too high)
         elif (balance < wager_amount * 20) or (balance > wager_amount * 1000):
-            log.info("Insufficient balance to continue playing keno.")
-            page.close()
+            log.info("Balance outside acceptable range, stopping keno game.")
+            # Try to stop autobet before exiting
+            try:
+                safe_click(page, "#stop_autobet", timeout=CLICK_TIMEOUT_MS)
+            except Exception as e:
+                log.warning("Could not stop autobet: %s", e)
             break
 
         page.wait_for_timeout(5000)  # Wait for 5 seconds to let the game play out
@@ -343,6 +434,118 @@ def gaussian_random_delay(mean: float = 50, stddev: float = 10) -> int:
         int: A random delay in milliseconds.
     """
     return int(max(0, random.gauss(mean, stddev)))
+
+
+def wait_for_clickable(
+    page: Page,
+    selector: str,
+    timeout: int = CLICK_TIMEOUT_MS,
+    scroll_into_view: bool = True
+) -> bool:
+    """Wait for an element to be clickable (visible and enabled).
+
+    Args:
+        page (Page): The Playwright page object.
+        selector (str): The CSS selector for the element.
+        timeout (int, optional): Maximum wait time in milliseconds. Defaults to CLICK_TIMEOUT_MS.
+        scroll_into_view (bool, optional): Whether to scroll element into view. Defaults to True.
+
+    Returns:
+        bool: True if element is clickable, False otherwise.
+    """
+    try:
+        locator = page.locator(selector)
+
+        # Wait for element to be visible
+        locator.wait_for(state="visible", timeout=timeout)
+
+        # Scroll into view if requested
+        if scroll_into_view:
+            try:
+                locator.scroll_into_view_if_needed(timeout=timeout // 2)
+            except Exception as e:
+                log.debug("Could not scroll element into view: %s", e)
+
+        # Check if element is enabled (not disabled)
+        if locator.is_disabled():
+            log.warning("Element %s is disabled", selector)
+            return False
+
+        return True
+    except Exception as e:
+        log.warning("Element %s not clickable within timeout: %s", selector, e)
+        return False
+
+
+def safe_click(
+    page: Page,
+    selector: str,
+    timeout: int = CLICK_TIMEOUT_MS,
+    max_retries: int = MAX_CLICK_RETRIES,
+    delay: Optional[int] = None,
+    force: bool = False,
+    scroll_into_view: bool = True
+) -> bool:
+    """Perform a click operation with timeout and retry logic.
+
+    Args:
+        page (Page): The Playwright page object.
+        selector (str): The CSS selector for the element to click.
+        timeout (int, optional): Maximum wait time per attempt in milliseconds. Defaults to CLICK_TIMEOUT_MS.
+        max_retries (int, optional): Maximum number of retry attempts. Defaults to MAX_CLICK_RETRIES.
+        delay (int, optional): Click delay in milliseconds. If None, uses gaussian_random_delay().
+        force (bool, optional): Whether to force the click. Defaults to False.
+        scroll_into_view (bool, optional): Whether to scroll element into view first. Defaults to True.
+
+    Returns:
+        bool: True if click succeeded, False otherwise.
+    """
+    if delay is None:
+        delay = gaussian_random_delay()
+
+    for attempt in range(max_retries):
+        try:
+            # Wait for element to be clickable
+            if not force and not wait_for_clickable(page, selector, timeout, scroll_into_view):
+                log.warning(
+                    "Element %s not clickable on attempt %d/%d",
+                    selector,
+                    attempt + 1,
+                    max_retries
+                )
+                if attempt < max_retries - 1:
+                    # Exponential backoff
+                    backoff_time = 1000 * (2 ** attempt)
+                    log.info("Waiting %dms before retry", backoff_time)
+                    page.wait_for_timeout(backoff_time)
+                    continue
+                else:
+                    return False
+
+            # Perform the click
+            page.click(selector, delay=delay, timeout=timeout, force=force)
+            log.debug("Successfully clicked %s on attempt %d", selector, attempt + 1)
+            return True
+
+        except Exception as e:
+            log.warning(
+                "Click failed on attempt %d/%d for %s: %s",
+                attempt + 1,
+                max_retries,
+                selector,
+                str(e)[:100]
+            )
+
+            if attempt < max_retries - 1:
+                # Exponential backoff
+                backoff_time = 1000 * (2 ** attempt)
+                log.info("Waiting %dms before retry", backoff_time)
+                page.wait_for_timeout(backoff_time)
+            else:
+                log.error("All click attempts failed for %s", selector)
+                return False
+
+    return False
 
 
 def parse_account_state_page(page: Page, currency: str = "UNK") -> Optional[AccountState]:
@@ -453,9 +656,6 @@ def parse_account_state_res(res: Response, currency: str = "UNK") -> AccountStat
         selector="b[class=faucet_claims_remaining]", identifier=f"remaining_claims_{currency}"
     )
     free_spins_selector = res.css(selector="span[id=free_spins]", identifier=f"free_spins_{currency}")
-    # countdown_selector = res.css(
-    #     selector='div[id="faucet_countdown_clock"] li[class=flip-clock-active]', identifier=f"countdown_{currency}"
-    # )
     countdown_selector = res.css(selector='div[id="faucet_countdown_clock"]', identifier=f"countdown_{currency}")
 
     # Extract text values with defaults
@@ -936,7 +1136,7 @@ def main(
                 # Check if Response object has a page attribute
                 if play_keno:
                     _: Response = session.fetch(
-                        f"{pick.url}keno.php", page_action=play_keno, timeout=0, solve_cloudflare=False
+                        f"{pick.url}keno.php", page_action=play_keno_func, timeout=0, solve_cloudflare=False
                     )
 
                 log.info("Finished processing %s", pick.url)

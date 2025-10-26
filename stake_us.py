@@ -85,64 +85,6 @@ claim_bonus_action = make_modal_tab_button(
     close_btn_selector=close_btn_selector,
 )
 
-# # call factory for our generator
-# make_casino_action = make_casino_action_factory(
-#     username_selector=username_selector,
-#     password_selector=password_selector,
-#     login_submit_selector=login_submit_selector,
-#     totp_code_selector=totp_code_selector,
-#     sweeps_coins_selectors=sweeps_coins_selectors,
-#     gold_coins_selectors=gold_coins_selectors,
-#     close_selectors=close_selectors,
-#     currency_toggle_dropdown_selector=currency_toggle_selector,
-#     currency_toggle_switch_selector=None,
-# )
-
-
-# def claim_daily_bonus(page: Page) -> None:
-#     """Clicks to claim the daily bonus if available.
-#     Args:
-#         page (Page): The Playwright page object.
-
-#     Returns:
-#     """
-#     wallet_btn_selector = 'button[data-testid="wallet"], button[data-analytics="global-navbar-wallet-button"]'
-#     daily_bonus_btn_selector = 'button[data-testid="dailyBonus"]'
-#     claim_btn_selector = "button.justify-center:nth-child(4)"
-#     close_btn_selector = 'button[data-testid="modal-close"]'
-
-#     try:
-#         page.click(wallet_btn_selector, delay=gaussian_random_delay(), timeout=5000)
-#         page.click(daily_bonus_btn_selector, delay=gaussian_random_delay(), timeout=5000)
-#         claim_btn = page.locator(claim_btn_selector)
-#         if claim_btn.is_disabled():
-#             log.info("Daily bonus already claimed.")
-#         else:
-#             claim_btn.click(delay=gaussian_random_delay(), timeout=5000)
-#             wait_for_load_all_safe(page, timeout=3000)
-#     except PlaywrightError as e:
-#         log.error("Exception occurred while claiming daily bonus: %s", str(e))
-#     finally:
-#         # Close the wallet modal if it's still open
-#         try:
-#             close_btn = page.locator(close_btn_selector)
-#             if close_btn.count() > 0:
-#                 close_btn.click(delay=gaussian_random_delay(), timeout=10000)
-#         except PlaywrightError:
-#             pass
-
-
-# MTB
-#
-# Modal,    Tab, Button; (Button)
-# Click,  Click,  Click;  (Click)
-#  Open, Switch,  Claim;   (Exit)
-#
-# Interface Objects
-# User Interaction
-# Affect Effected
-#
-
 
 def main(
     proxy: Optional[str],
