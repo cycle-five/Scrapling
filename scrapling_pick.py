@@ -271,7 +271,7 @@ def play_keno_func(page: Page) -> None:
     # Select keno board picks with timeout handling
     for pick in picks:
         try:
-            page.locator(board_selector).filter(has_text="{}".format(pick)).first.click(
+            page.locator(board_selector).filter(has_text=str(pick)).first.click(
                 delay=gaussian_random_delay(), timeout=CLICK_TIMEOUT_MS
             )
         except Exception as e:
@@ -313,7 +313,7 @@ def play_keno_func(page: Page) -> None:
                 log.error(
                     "Balance unchanged for %d seconds (balance: %f), detected hang - exiting",
                     int(time_since_change),
-                    balance
+                    balance,
                 )
                 break
 
@@ -437,10 +437,7 @@ def gaussian_random_delay(mean: float = 50, stddev: float = 10) -> int:
 
 
 def wait_for_clickable(
-    page: Page,
-    selector: str,
-    timeout: int = CLICK_TIMEOUT_MS,
-    scroll_into_view: bool = True
+    page: Page, selector: str, timeout: int = CLICK_TIMEOUT_MS, scroll_into_view: bool = True
 ) -> bool:
     """Wait for an element to be clickable (visible and enabled).
 
@@ -484,7 +481,7 @@ def safe_click(
     max_retries: int = MAX_CLICK_RETRIES,
     delay: Optional[int] = None,
     force: bool = False,
-    scroll_into_view: bool = True
+    scroll_into_view: bool = True,
 ) -> bool:
     """Perform a click operation with timeout and retry logic.
 
@@ -507,15 +504,10 @@ def safe_click(
         try:
             # Wait for element to be clickable
             if not force and not wait_for_clickable(page, selector, timeout, scroll_into_view):
-                log.warning(
-                    "Element %s not clickable on attempt %d/%d",
-                    selector,
-                    attempt + 1,
-                    max_retries
-                )
+                log.warning("Element %s not clickable on attempt %d/%d", selector, attempt + 1, max_retries)
                 if attempt < max_retries - 1:
                     # Exponential backoff
-                    backoff_time = 1000 * (2 ** attempt)
+                    backoff_time = 1000 * (2**attempt)
                     log.info("Waiting %dms before retry", backoff_time)
                     page.wait_for_timeout(backoff_time)
                     continue
@@ -528,17 +520,11 @@ def safe_click(
             return True
 
         except Exception as e:
-            log.warning(
-                "Click failed on attempt %d/%d for %s: %s",
-                attempt + 1,
-                max_retries,
-                selector,
-                str(e)[:100]
-            )
+            log.warning("Click failed on attempt %d/%d for %s: %s", attempt + 1, max_retries, selector, str(e)[:100])
 
             if attempt < max_retries - 1:
                 # Exponential backoff
-                backoff_time = 1000 * (2 ** attempt)
+                backoff_time = 1000 * (2**attempt)
                 log.info("Waiting %dms before retry", backoff_time)
                 page.wait_for_timeout(backoff_time)
             else:
@@ -565,6 +551,7 @@ def parse_account_state_page(page: Page, currency: str = "UNK") -> Optional[Acco
     time_remaining: Optional[str] = None
     try:
         balance_element: Optional[ElementHandle] = page.query_selector(selector="span[class=user_balance]")
+        balance_element_new: Optional[ElementHandle] = page.query_selector(selector=".drop_down_header_text")
         wagered_element: Optional[ElementHandle] = page.query_selector(selector="b[id=total_wagered]")
         target_element: Optional[ElementHandle] = page.query_selector(selector="b[id=wagering_target]")
         remaining_claims_element: Optional[ElementHandle] = page.query_selector(
@@ -608,14 +595,17 @@ def parse_account_state_page(page: Page, currency: str = "UNK") -> Optional[Acco
         if flipclock_locator.count() >= 0:
             time_remaining = parse_flipclock(page, flipclock_selector)
 
-        balance_text = balance_element.text_content() if balance_element else "0.0"
+        balance_text = balance_element.text_content() if balance_element else None
+        balance_text_new = balance_element_new.text_content() if balance_element_new else None
         wagered_text = wagered_element.text_content() if wagered_element else "0.0"
         target_text = target_element.text_content() if target_element else "0.0"
         remaining_claims_text = remaining_claims_element.text_content() if remaining_claims_element else "0"
         free_spins_text = free_spins_element.text_content() if free_spins_element else "0"
 
         # Parse numeric values
-        balance = float(balance_text.strip().replace(",", "").strip())
+        balance = float(balance_text.strip().replace(",", "").strip()) if balance_text else (
+            float(balance_text_new.strip().replace(",", "").strip()) if balance_element_new else 0.0
+        )
         wagered = float(wagered_text.strip())
         target = float(target_text.strip())
         remaining_claims = int(remaining_claims_text.strip())
@@ -746,6 +736,7 @@ def google_oauth_login_page_make() -> Callable[[Page], None]:
         google_button_clicked = False
         for selector in google_button_selectors:
             try:
+                page.get_by_text
                 page.locator(selector).first.click(delay=gaussian_random_delay(), timeout=2000)
                 google_button_clicked = True
                 log.info("Clicked Google sign-in button with selector: %s", selector)
@@ -1033,15 +1024,29 @@ def check_logged_in(res: Response) -> bool:
     Returns:
         bool: True if logged in, False otherwise.
     """
+    # Check for logout button by class
     logout_link = res.css(selector="li[class='lg_logout_btn']", identifier="logout_btn")
-    return logout_link.get() is not None
+
+    # Check for logout link by various common patterns
+    logout_link1 = res.css(selector="a#process_logout", identifier="logout_link_class")
+    logout_link2 = res.css(selector="a[href*='logout']", identifier="logout_link_href")
+    logout_link3 = res.css(selector="a.logout", identifier="logout_link_class").filter(lambda el: el.has_text("Logout"))
+
+    return (
+        logout_link.get() is not None
+        or logout_link1.get() is not None
+        or logout_link2.get() is not None
+        or logout_link3.get() is not None
+    )
 
 
-def summarize_picks(picks: List[Pick]):
-    """
-    Summarize the picks by printing a table of their current status.
+def summarize_picks(picks: List[Pick]) -> None:
+    """Summarize the picks by printing a table of their current status.
+
     Args:
         picks (list[Pick]): List of Pick objects to summarize.
+    Returns:
+        None (side-effect: prints summary to log)
     """
     log.info(
         "{: <21} | {: <8} | {: >15} | {: >15} | {: >15} | {: >15} | {: >8} | {: >12} | {: >15}".format(
@@ -1065,7 +1070,7 @@ def main(
     """
     Main function to run the scraper.
     Args:
-        picks (List[Pick], required): List of Pick objects to process. Defaults to [].
+        picks (List[Pick], required): List of Pick objects to process.
         proxy (str | None, optional): Proxy URL to use. Defaults to None.
         use_google_oauth (bool, optional): Whether to use Google OAuth for login. Defaults
         user_data_dir (str | None, optional): Path to user data directory. Defaults to None.
@@ -1078,8 +1083,13 @@ def main(
         None
     """
     finished_picks: List[Pick] = []
+    tries: Dict[str, int] = {x.url: 0 for x in picks}
     while len(picks) > 0:
         pick = picks.pop(0)
+        tries[pick.url] += 1
+        if tries[pick.url] > 3:
+            log.error("Exceeded maximum retries for %s, skipping.", pick.url)
+            continue
         # Choose login method
         if use_google_oauth:
             login_page, claim_already_attempted = google_oauth_login_page_make()

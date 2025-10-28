@@ -9,7 +9,7 @@ sys.path.append(".")
 
 from scrapling.engines.toolbelt.custom import Response
 from scrapling.fetchers import StealthySession
-from playwright.sync_api import Page, Error as PlaywrightError, Locator
+from playwright.sync_api import Page, Error as PlaywrightError, Locator, ElementHandle
 from playwright._impl._errors import TimeoutError, TargetClosedError
 from casino import (
     get_credentials,
@@ -67,29 +67,49 @@ def luckybird_mtb(page: Page) -> bool:
         close_btn_selector=",".join(close_selectors),
     )
     mtb(page)
-    # try:
-    #     log.info("Navigating to MTB section...")
-    #     page.click(buy_btn_selector, delay=gaussian_random_delay(), timeout=3000)
-    #     wait_for_load_all_safe(page)
 
-    #     log.info("Clicking on Daily Bonus tab...")
-    #     page.click(daily_bonus_tab_selector, delay=gaussian_random_delay(), timeout=3000)
-    #     wait_for_load_all_safe(page, timeout=3000)
+def highlight_element_handle(element: ElementHandle):
+    """Highlight an element on the page for debugging purposes.
 
-    #     log.info("Clicking on Claim Daily Bonus button...")
-    #     page.locator(claim_daily_bonus_disabled_selector)
-    #     if page.locator(claim_daily_bonus_disabled_selector).count() > 0:
-    #         log.info("Daily bonus already claimed or not available.")
-    #         return False
-    #     page.click(claim_daily_bonus_selector, delay=gaussian_random_delay(), timeout=3000)
-    #     wait_for_load_all_safe(page)
+    Args:
+        element: The Playwright ElementHandle object
+    """
+    try:
+        element.evaluate(
+            """(element) => {
+                element.style.border = '3px solid red';
+                # element.style.backgroundColor = 'yellow';
+                setTimeout(() => { element.style.border = ''; }, 10000);
+            }"""
+        )
+        log.info("Highlighted element with selector: %s", element)
+    except PlaywrightError as e:
+        log.error("Error highlighting element: %s", str(e))
 
-    #     log.info("Successfully claimed daily bonus from MTB section!")
-    #     return True
-    # except (PlaywrightError, TimeoutError, TargetClosedError) as e:
-    #     log.error("Error during MTB daily bonus claim: %s", str(e))
-    #     return False
 
+
+def highlight_element(page: Page, selector: str):
+    """Highlight an element on the page for debugging purposes.
+
+    Args:
+        page: The Playwright Page object
+        selector: The CSS selector of the element to highlight
+    """
+    try:
+        element: Locator = page.locator(selector).first
+        if element.count() > 0:
+            element.evaluate(
+                """(element) => {
+                    element.style.border = '3px solid red';
+                    # element.style.backgroundColor = 'yellow';
+                    setTimeout(() => { element.style.border = ''; }, 10000);
+                }"""
+            )
+            log.info("Highlighted element with selector: %s", selector)
+        else:
+            log.warning("No element found to highlight with selector: %s", selector)
+    except PlaywrightError as e:
+        log.error("Error highlighting element: %s", str(e))
 
 def luckybird_daily_initial_popups(page: Page) -> bool:
     """Claim the daily bonus on LuckyBird.io.
@@ -100,21 +120,23 @@ def luckybird_daily_initial_popups(page: Page) -> bool:
     Returns:
         bool: True if claim was successful, False otherwise
     """
-    daily_modal_selector = "section.dailyBonus_page"
     # claim_button_selector = "section.dailyBonus_page button.el-button--primary:not(.is-disabled)"
+    # modal_selector = "section.commonAlert_page"
+    modal_selector = "section.dailyBonus_page"
     close_modal_selector = "section.dailyBonus_page .commonAlert_close"
 
     try:
         # Wait for the daily bonus modal to appear
         log.info("Waiting for daily bonus modal to appear...")
-        page.wait_for_selector(daily_modal_selector, state="visible", timeout=3000)
+        page.wait_for_selector(modal_selector, state="visible", timeout=3000)
     except PlaywrightError as e:
         log.warning("Initial alerts popups timed out: %s", str(e))
         return False
 
     try:
         # Find the claim button that is not disabled
-        enabled_buttons: Locator = page.locator(main_enabled_selector)
+        # enabled_buttons: Locator = page.locator(main_enabled_selector)
+        enabled_buttons: List[ElementHandle] = page.query_selector_all(main_enabled_selector)
 
         n = 0
         while enabled_buttons.count() > 0:
@@ -124,9 +146,11 @@ def luckybird_daily_initial_popups(page: Page) -> bool:
 
             # Click the first available claim button
             log.info("Found enabled button, clicking...")
+            highlight_element_handle(enabled_buttons)
             enabled_buttons.first.click(delay=gaussian_random_delay(), timeout=5000, force=True)
 
-            enabled_buttons: Locator = page.locator(main_enabled_selector)
+            # enabled_buttons: Locator = page.locator(main_enabled_selector)
+            enabled_buttons: List[ElementHandle] = page.query_selector_all(main_enabled_selector)
         # Wait for the claim to process
         wait_for_load_all_safe(page, timeout=3000)
 
@@ -303,6 +327,7 @@ def make_luckybird_action(
 
 def main(
     proxy: Optional[str],
+    headless: bool = False,
     google_oauth: bool = False,
     skip_claim: bool = False,
     user_data_dir: Optional[str] = None,
@@ -317,7 +342,7 @@ def main(
 
     with StealthySession(
         proxy=proxy,
-        headless=False,
+        headless=headless,
         humanize=True,
         load_dom=True,
         google_search=False,
@@ -330,26 +355,45 @@ def main(
             wait=5000,
         )
 
-
-if __name__ == "__main__":
-    parser = ArgumentParser()
-    parser.add_argument("--proxy", help="proxy url to use", default=None)
+def get_arg_parser(description: str = "Generic Daily Bonus Claimer") -> ArgumentParser:
+    """Get argument parser for command-line options.
+    Args:
+        description: Description for the argument parser
+    Returns:
+        ArgumentParser: Configured argument parser
+    """
+    parser = ArgumentParser(description=description)
+    parser.add_argument(
+        "--proxy",
+        type=str,
+        default=None,
+        help="Proxy server to use (e.g., http://user:pass@host:port)",
+    )
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Run browser in headless mode (no GUI)",
+    )
     parser.add_argument(
         "--google-oauth",
         action="store_true",
-        help="use Google OAuth login instead of username/password",
-    )
-    parser.add_argument(
-        "--user-data-dir",
-        type=str,
-        help="Path to user data directory for browser session",
-        default=None,
+        help="Enable Google OAuth handling (if applicable)",
     )
     parser.add_argument(
         "--skip-claim",
         action="store_true",
-        help="Skip the claim portion of the code.",
+        help="Skip claiming the daily bonus",
     )
+    parser.add_argument(
+        "--user-data-dir",
+        type=str,
+        default=None,
+        help="Path to user data directory for browser session",
+    )
+    return parser
+
+if __name__ == "__main__":
+    parser = get_arg_parser(description="LuckyBird Daily Bonus Claimer")
     args = parser.parse_args()
 
     main(**vars(args))
