@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from functools import wraps
 from typing import Callable, TypeVar, Any, Dict, List, Optional
 from pathlib import Path
-from playwright.sync_api import Page, ElementHandle, Locator
+from playwright.sync_api import Page, ElementHandle, Locator, TimeoutError as PlaywrightTimeoutError
 from scrapling.engines.toolbelt.custom import Response, Selector
 from scrapling.fetchers import StealthySession
 from scrapling.cli import log
@@ -202,7 +202,7 @@ def get_balance(page: Page) -> float:
     if balance_element:
         balance_text = balance_element.text_content()
         try:
-            balance = float(balance_text.strip().replace(",", "").strip())
+            balance = float(''.join(balance_text.split()).replace(",", ""))
         except ValueError:
             log.error("Could not parse balance: %s", balance_text)
 
@@ -534,6 +534,51 @@ def safe_click(
     return False
 
 
+def parse_flipclock(page: Page, flipclock_selector: str, flipclock_digits_selector: str) -> Optional[str]:
+    """Parse the flipclock countdown timer from the page.
+
+    Args:
+        page (Page): The Playwright Page object.
+        flipclock_selector (str): The CSS selector for the flipclock container.
+        flipclock_digits_selector (str): The CSS selector for the flipclock digit elements.
+
+    Returns:
+        Optional[str]: The time remaining in MM:SS format, or None if not found.
+    """
+    time_remaining = None
+    try:
+        # Wait for flipclock to be populated by JavaScript (max 3 seconds)
+        flipclock_element: ElementHandle = page.wait_for_selector(flipclock_selector, timeout=3000, state="attached")
+    except PlaywrightTimeoutError as e:
+        log.warning("Flipclock not found on page (faucet likely ready): %s", str(e)[:100])
+
+    # Query the flipclock digits from the live DOM
+    active_digits_elements: List[ElementHandle] = flipclock_element.query_selector_all(flipclock_digits_selector)
+
+    log.info("Found %d active digit elements from Page", len(active_digits_elements))
+
+    if active_digits_elements and len(active_digits_elements) >= 4:
+        # Extract text from each digit element
+        digits_text = [elem.inner_text().strip() for elem in active_digits_elements[:4]]
+        log.info("Digit texts from Page: %s", digits_text)
+
+        try:
+            # Each element should contain a single digit
+            minute_tens = digits_text[0][0] if digits_text[0] else "0"
+            minute_ones = digits_text[1][0] if digits_text[1] else "0"
+            second_tens = digits_text[2][0] if digits_text[2] else "0"
+            second_ones = digits_text[3][0] if digits_text[3] else "0"
+
+            time_remaining = f"{minute_tens}{minute_ones}:{second_tens}{second_ones}"
+            log.info("Flipclock time remaining (from Page): %s (MM:SS)", time_remaining)
+        except (IndexError, AttributeError) as e:
+            log.warning("Failed to parse flipclock digits from Page: %s", e)
+    else:
+        log.info("No active flipclock found - faucet may be ready to claim")
+
+    return time_remaining
+
+
 def parse_account_state_page(page: Page, currency: str = "UNK") -> Optional[AccountState]:
     """Parse the current account state from the faucet page.
 
@@ -547,72 +592,41 @@ def parse_account_state_page(page: Page, currency: str = "UNK") -> Optional[Acco
     Returns:
         AccountState: An AccountState object containing all parsed account information.
     """
-    flipclock_selector: str = "#faucet_countdown_clock .clock li.flip-clock-active"
+    flipclock_selector: str = "#faucet_countdown_clock"
+    flipclock_digits_selector: str = "#faucet_countdown_clock .clock ul.flip li.flip-clock-active"
     time_remaining: Optional[str] = None
+    balance_element: Optional[ElementHandle] = page.query_selector(selector="span[class=user_balance]")
+    balance_element_new: Optional[ElementHandle] = page.query_selector(selector=".drop_down_header_text")
+    wagered_element: Optional[ElementHandle] = page.query_selector(selector="b[id=total_wagered]")
+    target_element: Optional[ElementHandle] = page.query_selector(selector="b[id=wagering_target]")
+    remaining_claims_element: Optional[ElementHandle] = page.query_selector(selector="b[class=faucet_claims_remaining]")
+    free_spins_element: Optional[ElementHandle] = page.query_selector(selector="span[id=free_spins]")
+
+    flipclock_locator: Locator = page.locator(flipclock_selector)
+
+    if flipclock_locator.count() > 0:
+        time_remaining = parse_flipclock(page, flipclock_selector, flipclock_digits_selector)
+
+    balance_text = balance_element.text_content() if balance_element else None
+    balance_text_new = balance_element_new.text_content() if balance_element_new else None
+    wagered_text = wagered_element.text_content() if wagered_element else "0.0"
+    target_text = target_element.text_content() if target_element else "0.0"
+    remaining_claims_text = remaining_claims_element.text_content() if remaining_claims_element else "0"
+    free_spins_text = free_spins_element.text_content() if free_spins_element else "0"
+
+    # Parse numeric values
     try:
-        balance_element: Optional[ElementHandle] = page.query_selector(selector="span[class=user_balance]")
-        balance_element_new: Optional[ElementHandle] = page.query_selector(selector=".drop_down_header_text")
-        wagered_element: Optional[ElementHandle] = page.query_selector(selector="b[id=total_wagered]")
-        target_element: Optional[ElementHandle] = page.query_selector(selector="b[id=wagering_target]")
-        remaining_claims_element: Optional[ElementHandle] = page.query_selector(
-            selector="b[class=faucet_claims_remaining]"
-        )
-        free_spins_element: Optional[ElementHandle] = page.query_selector(selector="span[id=free_spins]")
-
-        flipclock_locator: Locator = page.locator(flipclock_selector)
-
-        def parse_flipclock(page: Page, flipclock_selector: str) -> Optional[str]:
-            time_remaining = None
-            # Wait for flipclock to be populated by JavaScript (max 3 seconds)
-            page.wait_for_selector(flipclock_selector, timeout=3000, state="attached")
-
-            # Query the flipclock digits from the live DOM
-            active_digits_elements = page.query_selector_all(flipclock_selector)
-
-            log.info("Found %d active digit elements from Page", len(active_digits_elements))
-
-            if active_digits_elements and len(active_digits_elements) >= 4:
-                # Extract text from each digit element
-                digits_text = [elem.inner_text().strip() for elem in active_digits_elements[:4]]
-                log.info("Digit texts from Page: %s", digits_text)
-
-                try:
-                    # Each element should contain a single digit
-                    minute_tens = digits_text[0][0] if digits_text[0] else "0"
-                    minute_ones = digits_text[1][0] if digits_text[1] else "0"
-                    second_tens = digits_text[2][0] if digits_text[2] else "0"
-                    second_ones = digits_text[3][0] if digits_text[3] else "0"
-
-                    time_remaining = f"{minute_tens}{minute_ones}:{second_tens}{second_ones}"
-                    log.info("Flipclock time remaining (from Page): %s (MM:SS)", time_remaining)
-                except (IndexError, AttributeError) as e:
-                    log.warning("Failed to parse flipclock digits from Page: %s", e)
-            else:
-                log.info("No active flipclock found - faucet may be ready to claim")
-
-            return time_remaining
-
-        if flipclock_locator.count() >= 0:
-            time_remaining = parse_flipclock(page, flipclock_selector)
-
-        balance_text = balance_element.text_content() if balance_element else None
-        balance_text_new = balance_element_new.text_content() if balance_element_new else None
-        wagered_text = wagered_element.text_content() if wagered_element else "0.0"
-        target_text = target_element.text_content() if target_element else "0.0"
-        remaining_claims_text = remaining_claims_element.text_content() if remaining_claims_element else "0"
-        free_spins_text = free_spins_element.text_content() if free_spins_element else "0"
-
-        # Parse numeric values
-        balance = float(balance_text.strip().replace(",", "").strip()) if balance_text else (
-            float(balance_text_new.strip().replace(",", "").strip()) if balance_element_new else 0.0
+        balance = (
+            float(''.join(balance_text.split()).replace(",", ""))
+            if balance_text
+            else (float(''.join(balance_text_new.split()).replace(",", "")) if balance_element_new else 0.0)
         )
         wagered = float(wagered_text.strip())
         target = float(target_text.strip())
         remaining_claims = int(remaining_claims_text.strip())
         free_spins = int(free_spins_text.strip())
-
-    except Exception as e:
-        log.info("Could not find flipclock in live DOM (faucet likely ready): %s", str(e)[:100])
+    except ValueError as e:
+        log.error("Error parsing numeric values: %s", e)
         return None
 
     return AccountState(

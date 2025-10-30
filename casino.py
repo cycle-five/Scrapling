@@ -35,10 +35,15 @@ class Currency:
         name: str,
         code: str,
         selectors: List[str],
+        is_active_selector: Optional[str] = None,
+        activate_selector: Optional[str] = None,
     ):
         self.name = name
         self.code = code
         self.selectors = selectors
+        self.is_active_selector = is_active_selector
+        self.activate_selector = activate_selector
+
 
 
 class CurrencyDisplayConfig:
@@ -283,8 +288,25 @@ def make_login_action_factory(
     username_selector: str,
     password_selector: str,
     login_submit_selector: str,
-    totp_code_selector: str,
-) -> Callable[[str, str, Optional[str]], None]:
+    totp_code_selector: Optional[str] = None,
+    totp_submit_selector: Optional[str] = None,
+    pre_login_form_callback: Optional[Callable[[Page], None]] = make_handle_google_one_tap_popup(close_selectors),
+    post_login_form_callback: Optional[Callable[[Page], None]] = None,
+) -> Callable[[str, str, Optional[str]], Callable[[Page], None]]:
+    """Generator for creating a login action factory.
+    Args:
+        username_selector (str): Selector for the username input field.
+        password_selector (str): Selector for the password input field.
+        login_submit_selector (str): Selector for the login submit button.
+        totp_code_selector (str): Selector for the TOTP code input field.
+        pre_login_form_callback (Optional[Callable[[Page], None]]): Optional callback for handling
+            any pre-login forms or popups.
+        post_login_form_callback (Optional[Callable[[Page], None]]): Optional callback for handling
+            any post-login forms.
+    Returns:
+        Callable[[str, str, Optional[str]], None]: A function that creates a login action.
+    """
+
     def login_action_factory(username: str, password: str, totp_secret: Optional[str]) -> Callable[[Page], None]:
         """Create a login page action.
 
@@ -299,8 +321,8 @@ def make_login_action_factory(
 
         def login_action(page: Page):
             # Initial page load handling popups / etc
-            handle_google_one_tap_popup = make_handle_google_one_tap_popup(close_selectors)
-            handle_google_one_tap_popup(page)
+            if pre_login_form_callback:
+                pre_login_form_callback(page)
 
             # Fill in login form and submit
             page.fill(username_selector, username)
@@ -315,13 +337,17 @@ def make_login_action_factory(
             # Wait for navigation to complete
             wait_for_load_all_safe(page)
 
+            # Optional post-login form handling
+            if post_login_form_callback:
+                post_login_form_callback(page)
+
             # Handle TOTP 2FA if applicable
-            if totp_secret:
+            if totp_secret and totp_code_selector and totp_submit_selector:
                 try:
                     page.wait_for_selector(totp_code_selector, state="visible", timeout=10000)
                     totp_code = pyotp.TOTP(totp_secret).now()
                     page.fill(totp_code_selector, totp_code)
-                    page.click(login_submit_selector, delay=gaussian_random_delay())
+                    page.click(totp_submit_selector, delay=gaussian_random_delay())
                 except Exception as e:
                     log.error("Error during TOTP entry: %s", str(e))
                     raise e
@@ -332,3 +358,41 @@ def make_login_action_factory(
         return login_action
 
     return login_action_factory
+
+
+def get_arg_parser(description: str = "Generic Daily Bonus Claimer") -> ArgumentParser:
+    """Get argument parser for command-line options.
+    Args:
+        description (str): Description for the argument parser
+    Returns:
+        ArgumentParser: Configured argument parser
+    """
+    parser = ArgumentParser(description=description)
+    parser.add_argument(
+        "--proxy",
+        type=str,
+        default=None,
+        help="Proxy server to use (e.g., http://user:pass@host:port)",
+    )
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Run browser in headless mode (no GUI)",
+    )
+    parser.add_argument(
+        "--google-oauth",
+        action="store_true",
+        help="Enable Google OAuth handling (if applicable)",
+    )
+    parser.add_argument(
+        "--skip-claim",
+        action="store_true",
+        help="Skip claiming the daily bonus",
+    )
+    parser.add_argument(
+        "--user-data-dir",
+        type=str,
+        default=None,
+        help="Path to user data directory for browser session",
+    )
+    return parser

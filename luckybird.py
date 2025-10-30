@@ -14,9 +14,13 @@ from playwright._impl._errors import TimeoutError, TargetClosedError
 from casino import (
     get_credentials,
     gaussian_random_delay,
+    get_arg_parser,
     wait_for_load_all_safe,
     log,
     make_handle_google_one_tap_popup,
+    make_login_action_factory,
+    CurrencyDisplayConfig,
+    Currency,
 )
 
 url = "https://luckybird.io/"
@@ -46,8 +50,17 @@ claim_daily_bonus_selector = "button.el-button--primary:not(.is-disabled)"
 claim_daily_bonus_disabled_selector = "button.el-button--primary:is-disabled"
 
 # Balance selectors - update sweeps_coins_selector once you identify the correct class
-gold_coins_selector = ".gold_color .amount"
-sweeps_coins_selector = ".sweeps_color .amount, .sc_color .amount, [class*='sweeps'] .amount"
+gold_coins_selectors = [".gold_color .amount"]
+sweeps_coins_selectors = [".sweeps_color .amount", ".sc_color .amount", "[class*='sweeps'] .amount"]
+
+currency_display_config = CurrencyDisplayConfig(
+    currencies=[
+        Currency(name="Sweeps Coins", code="SC", selectors=sweeps_coins_selectors, activate_selector=".sweeps_color"),
+        Currency(name="Gold Coins", code="GC", selectors=gold_coins_selectors, activate_selector=".gold_color"),
+    ],
+    currency_toggle_dropdown_selector=None,
+    currency_toggle_switch_selector=None,
+)
 
 
 def luckybird_mtb(page: Page) -> bool:
@@ -68,6 +81,7 @@ def luckybird_mtb(page: Page) -> bool:
     )
     mtb(page)
 
+
 def highlight_element_handle(element: ElementHandle):
     """Highlight an element on the page for debugging purposes.
 
@@ -85,7 +99,6 @@ def highlight_element_handle(element: ElementHandle):
         log.info("Highlighted element with selector: %s", element)
     except PlaywrightError as e:
         log.error("Error highlighting element: %s", str(e))
-
 
 
 def highlight_element(page: Page, selector: str):
@@ -110,6 +123,7 @@ def highlight_element(page: Page, selector: str):
             log.warning("No element found to highlight with selector: %s", selector)
     except PlaywrightError as e:
         log.error("Error highlighting element: %s", str(e))
+
 
 def luckybird_daily_initial_popups(page: Page) -> bool:
     """Claim the daily bonus on LuckyBird.io.
@@ -187,7 +201,7 @@ def parse_coin_balances(page: Page) -> Dict[str, Optional[float]]:
     number_pattern = re.compile(r"[\d,]+\.?\d*")
 
     # Currency switcher selector
-    currency_switcher_selector = ".tw-currency-img-new"
+    currency_switcher_selector = ".currency-disabled"
     active_amount_selector = ".currency-active .amount"
 
     try:
@@ -252,77 +266,16 @@ def parse_coin_balances(page: Page) -> Dict[str, Optional[float]]:
     return balances
 
 
-def make_luckybird_action(
-    # close initial pops
-    close_selectors: List[str],
-    # login
-    username: str,
-    password: str,
-    totp_secret: Optional[str],
-    # options
-    skip_claim: bool = False,
-) -> Callable[[Page], None]:
-    """Create a luckybird page action that logs in and claims daily bonus.
-
-    Args:
-        username: Login username for LuckyBird
-        password: Login password for LuckyBird
-        totp_secret: Optional TOTP secret for 2FA
-
-    Returns:
-        Callable page action function
-    """
-
-    def luckybird_action(page: Page):
-        # Handle any popups that might appear
-        try:
-            # make_handle_google_one_tap_popup(close_selectors)(page)
-            page.click('div[id="tab-login"]', delay=gaussian_random_delay(), timeout=10000)
-        except Exception:
-            # Google popup handling is optional for luckybird
-            pass
-
-        # Fill in login form and submit
-        log.info("Logging into LuckyBird.io...")
-        page.fill(username_selector, username)
-        page.fill(password_selector, password)
-
-        try:
-            page.click(login_submit_selector, delay=gaussian_random_delay(), timeout=10000)
-        except Exception as e:
-            log.error("Error during login: %s", str(e))
-            raise e
-
-        # Handle TOTP 2FA if applicable
-        if totp_secret:
-            try:
-                page.wait_for_selector(totp_code_selector, state="visible", timeout=10000)
-                totp_code = pyotp.TOTP(totp_secret).now()
-                page.fill(totp_code_selector, totp_code)
-                page.click(twofa_submit_selector, delay=gaussian_random_delay(), timeout=10000)
-            except Exception as e:
-                log.error("Error during TOTP entry: %s", str(e))
-                raise e
-
-        # Wait for navigation to complete
-        wait_for_load_all_safe(page)
-        log.info("Successfully logged into LuckyBird.io")
-
-        # Parse and log current coin balances
-        balances = parse_coin_balances(page)
-        log.info(
-            "Current balances - Gold Coins: %s, Sweeps Coins: %s",
-            balances["gold_coins"],
-            balances["sweeps_coins"],
-        )
-
-        # Claim the daily bonus
-        if not skip_claim:
-            claimed = luckybird_daily_initial_popups(page)
-            if not claimed:
-                luckybird_mtb(page)
-
-    return luckybird_action
+login_action_factory: Callable[[str, str, Optional[str]], Callable[[Page], None]] = make_login_action_factory(
+    username_selector=username_selector,
+    password_selector=password_selector,
+    login_submit_selector=login_submit_selector,
+    totp_code_selector=totp_code_selector,
+    totp_submit_selector=twofa_submit_selector,
+    pre_login_form_callback=lambda page: page.click(
+        'div[id="tab-login"]', delay=gaussian_random_delay(), timeout=10000
+    ),
+)
 
 
 def main(
@@ -340,6 +293,8 @@ def main(
     if user_data_dir is not None:
         additional_args["user_data_dir"] = user_data_dir
 
+    login_action: Callable[[Page], None] = login_action_factory(username, password, totp_secret)
+
     with StealthySession(
         proxy=proxy,
         headless=headless,
@@ -349,48 +304,8 @@ def main(
         additional_args=additional_args,
     ) as session:
         # Login to LuckyBird and claim daily bonus
-        _: Response = session.fetch(
-            login_url,
-            page_action=make_luckybird_action(close_selectors, username, password, totp_secret, skip_claim),
-            wait=5000,
-        )
+        _: Response = session.fetch(login_url, page_action=login_action, wait=5000, google_search=False)
 
-def get_arg_parser(description: str = "Generic Daily Bonus Claimer") -> ArgumentParser:
-    """Get argument parser for command-line options.
-    Args:
-        description: Description for the argument parser
-    Returns:
-        ArgumentParser: Configured argument parser
-    """
-    parser = ArgumentParser(description=description)
-    parser.add_argument(
-        "--proxy",
-        type=str,
-        default=None,
-        help="Proxy server to use (e.g., http://user:pass@host:port)",
-    )
-    parser.add_argument(
-        "--headless",
-        action="store_true",
-        help="Run browser in headless mode (no GUI)",
-    )
-    parser.add_argument(
-        "--google-oauth",
-        action="store_true",
-        help="Enable Google OAuth handling (if applicable)",
-    )
-    parser.add_argument(
-        "--skip-claim",
-        action="store_true",
-        help="Skip claiming the daily bonus",
-    )
-    parser.add_argument(
-        "--user-data-dir",
-        type=str,
-        default=None,
-        help="Path to user data directory for browser session",
-    )
-    return parser
 
 if __name__ == "__main__":
     parser = get_arg_parser(description="LuckyBird Daily Bonus Claimer")

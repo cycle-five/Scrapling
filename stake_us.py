@@ -18,6 +18,7 @@ import os
 # sys.path.append(".")
 
 from casino import (
+    get_arg_parser,
     CasinoAccountState,
     CurrencyDisplayConfig,
     Currency,
@@ -62,6 +63,7 @@ login_action_factory = make_login_action_factory(
     password_selector=password_selector,
     login_submit_selector=login_submit_selector,
     totp_code_selector=totp_code_selector,
+    totp_submit_selector=login_submit_selector,
 )
 
 # define currency display configuration
@@ -88,9 +90,12 @@ claim_bonus_action = make_modal_tab_button(
 
 def main(
     proxy: Optional[str],
-    google_oauth: bool = False,
+    headless: Optional[bool] = False,
+    google_oauth: Optional[bool] = False,
+    skip_claim: Optional[bool] = False,
     user_data_dir: Optional[str] = None,
 ):
+    headless = headless if headless is not None else False
     username, password = get_credentials("https://stake.us")
     totp_secret = os.getenv("STAKE_2FA")  # Replace with actual TOTP secret if available
     action_args = {
@@ -116,14 +121,15 @@ def main(
         log.info("Account State: %s", account_state)
 
         # Claim daily bonus
-        claim_bonus_action(page)
+        if not skip_claim:
+            claim_bonus_action(page)
         wait_for_load_all_safe(page)
 
         # You can add more actions here as needed
 
     with StealthySession(
         proxy=proxy,
-        headless=False,
+        headless=headless,
         humanize=True,
         load_dom=True,
         google_search=False,
@@ -137,19 +143,6 @@ def main(
 
 
 if __name__ == "__main__":
-    parser = ArgumentParser()
-    parser.add_argument("--proxy", help="proxy url to use", default=None)
-    parser.add_argument(
-        "--google-oauth",
-        action="store_true",
-        help="use Google OAuth login instead of username/password",
-    )
-    parser.add_argument(
-        "--user-data-dir",
-        type=str,
-        help="Path to user data directory for browser session",
-        default=None,
-    )
+    parser = get_arg_parser(description="Stake.us Casino Automation")
     args = parser.parse_args()
-
     main(**vars(args))
