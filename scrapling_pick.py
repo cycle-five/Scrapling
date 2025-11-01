@@ -33,11 +33,11 @@ T = TypeVar("T")
 class AccountState:
     """Represents the current state of a faucet account."""
 
-    balance: float
-    wagered: float
-    target: float
-    remaining_claims: int
-    free_spins: int
+    balance: float = 0.0
+    wagered: float = 0.0
+    target: float = 0.0
+    remaining_claims: int = 0
+    free_spins: int = 0
     time_remaining: Optional[str] = None  # Format: "MM:SS" when countdown is active
 
     def is_faucet_available(self) -> bool:
@@ -105,14 +105,14 @@ class Pick:
 
     def update(
         self,
-        balance: float = None,
-        wagered: float = None,
-        target: float = None,
-        remaining_claims: int = None,
-        free_spins: int = None,
+        balance: Optional[float] = None,
+        wagered: Optional[float] = None,
+        target: Optional[float] = None,
+        remaining_claims: Optional[int] = None,
+        free_spins: Optional[int] = None,
         cooldown_timer: Optional[str] = None,
-        account_state: AccountState = None,
-    ):
+        account_state: Optional[AccountState] = None,
+    ) -> None:
         """Update the Pick with new account state data.
 
         Args:
@@ -164,7 +164,7 @@ class Pick:
     def get_env_prefix(self) -> str:
         return url_to_env_prefix(self.url)
 
-    def to_dict(self):
+    def to_dict(self) -> Dict[str, Any]:
         return pick_to_dict_json_safe(self)
 
     def write(self, filepath: str):
@@ -202,7 +202,7 @@ def get_balance(page: Page) -> float:
     if balance_element:
         balance_text = balance_element.text_content()
         try:
-            balance = float(''.join(balance_text.split()).replace(",", ""))
+            balance = float("".join(balance_text.split()).replace(",", ""))
         except ValueError:
             log.error("Could not parse balance: %s", balance_text)
 
@@ -593,7 +593,7 @@ def parse_account_state_page(page: Page, currency: str = "UNK") -> Optional[Acco
         AccountState: An AccountState object containing all parsed account information.
     """
     flipclock_selector: str = "#faucet_countdown_clock"
-    flipclock_digits_selector: str = "#faucet_countdown_clock .clock ul.flip li.flip-clock-active"
+    flipclock_digits_selector: str = ".clock ul.flip"
     time_remaining: Optional[str] = None
     balance_element: Optional[ElementHandle] = page.query_selector(selector="span[class=user_balance]")
     balance_element_new: Optional[ElementHandle] = page.query_selector(selector=".drop_down_header_text")
@@ -617,9 +617,9 @@ def parse_account_state_page(page: Page, currency: str = "UNK") -> Optional[Acco
     # Parse numeric values
     try:
         balance = (
-            float(''.join(balance_text.split()).replace(",", ""))
+            float("".join(balance_text.split()).replace(",", ""))
             if balance_text
-            else (float(''.join(balance_text_new.split()).replace(",", "")) if balance_element_new else 0.0)
+            else (float("".join(balance_text_new.split()).replace(",", "")) if balance_element_new else 0.0)
         )
         wagered = float(wagered_text.strip())
         target = float(target_text.strip())
@@ -856,10 +856,10 @@ def login_page_make(username: str, password: str, currency: str = "UNK") -> Call
         try:
             page.locator(box_selector).scroll_into_view_if_needed(timeout=2000)
             page.locator(box_selector).wait_for(state="visible", timeout=2000)
-            log.debug("Captcha box detected.")
+            log.debug("Turnstile box detected.")
             page.wait_for_timeout(500)
         except Exception:
-            log.debug("No captcha box detected.")
+            log.debug("No turnstile box detected.")
 
         page.click(login_button_selector, delay=gaussian_random_delay())
 
@@ -1138,11 +1138,6 @@ def main(
                     picks.append(pick)  # Re-add to the end of the list to try again later
                     continue
 
-                # Check if Response object has a page attribute
-                # page_obj = getattr(login_response, "page", None) or getattr(login_response, "_page", None)
-                # log.info("Page object found in login_response: %s", page_obj is not None)
-                # account_state = parse_account_state_res(login_response, currency=pick.currency, page=page_obj)
-                # pick.update(account_state=account_state)
                 log.debug("%s", pick)
 
                 if skip_claim:

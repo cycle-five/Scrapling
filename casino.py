@@ -71,8 +71,14 @@ close_selectors = [
 
 def make_get_casino_account_state(
     currency_display_config: CurrencyDisplayConfig,
-) -> callable:
-    """makes a function for getting the account state via a closure."""
+) -> Callable[[Page], CasinoAccountState]:
+    """makes a function for getting the account state via a closure.
+
+    Args:
+        currency_display_config (CurrencyDisplayConfig): Configuration for currency selectors.
+    Returns:
+        Callable[[Page], CasinoAccountState]: A function that parses the casino account state from a
+    """
 
     def get_casino_account_state(page: Page) -> CasinoAccountState:
         """Parse the casino account state from the page.
