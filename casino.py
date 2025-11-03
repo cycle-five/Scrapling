@@ -1,17 +1,22 @@
 from argparse import ArgumentParser
 from dataclasses import dataclass
-import pyotp
 from typing import Callable, Optional, List
 from playwright.sync_api import Page, Response as PlaywrightResponse, Locator, Error as PlaywrightError
+from urllib.parse import urlparse
 from scrapling.fetchers import StealthySession
 from scrapling.engines.toolbelt.custom import Response
 from scrapling.cli import log
-from scrapling_pick import get_credentials, gaussian_random_delay
+
+import pyotp
+import random
 import sys
 import os
 
-
-sys.path.append(".")
+# Default contant values
+CLICK_TIMEOUT_MS = 5000  # Default timeout for click operations
+MAX_CLICK_RETRIES = 3  # Maximum number of retry attempts for failed clicks
+HANG_DETECTION_SECONDS = 30  # Seconds without balance change before detecting hang
+MAX_KENO_ITERATIONS = 1000  # Maximum iterations in gambling loop as safety net
 
 
 @dataclass
@@ -43,7 +48,6 @@ class Currency:
         self.selectors = selectors
         self.is_active_selector = is_active_selector
         self.activate_selector = activate_selector
-
 
 
 class CurrencyDisplayConfig:
@@ -364,6 +368,153 @@ def make_login_action_factory(
         return login_action
 
     return login_action_factory
+
+
+def url_to_env_prefix(url: str) -> str:
+    """Convert a URL to an environment variable prefix.
+
+    Args:
+        url (str): The URL to convert.
+
+    Returns:
+        str: The environment variable prefix.
+    """
+    parsed_url = urlparse(url)
+    netloc = parsed_url.netloc
+
+    prefix = netloc.split(".")[0]
+    return prefix.upper()
+
+
+def get_credentials(url: str) -> tuple[str, str]:
+    """Get the credentials for Tronpick.
+
+    Raises:
+        ValueError: If the credentials are not set.
+
+    Returns:
+        tuple[str, str]: The username and password.
+    """
+
+    env_prefix = url_to_env_prefix(url)
+
+    username = os.getenv(f"{env_prefix}_USERNAME")
+    password = os.getenv(f"{env_prefix}_PASSWORD")
+    if not username or not password:
+        raise ValueError(f"{env_prefix}_USERNAME and {env_prefix}_PASSWORD must be set")
+    return username, password
+
+
+def gaussian_random_delay(mean: float = 50, stddev: float = 10) -> int:
+    """Generate a Gaussian random delay in milliseconds.
+    The defaults are chosen to (hopefully) simulate human-like delays.
+
+    Args:
+        mean (float, optional): The mean delay in milliseconds. Defaults to 50.
+        stddev (float, optional): The standard deviation of the delay in milliseconds. Defaults to 10.
+
+    Returns:
+        int: A random delay in milliseconds.
+    """
+    return int(max(0, random.gauss(mean, stddev)))
+
+
+def wait_for_clickable(
+    page: Page, selector: str, timeout: int = CLICK_TIMEOUT_MS, scroll_into_view: bool = True
+) -> bool:
+    """Wait for an element to be clickable (visible and enabled).
+
+    Args:
+        page (Page): The Playwright page object.
+        selector (str): The CSS selector for the element.
+        timeout (int, optional): Maximum wait time in milliseconds. Defaults to CLICK_TIMEOUT_MS.
+        scroll_into_view (bool, optional): Whether to scroll element into view. Defaults to True.
+
+    Returns:
+        bool: True if element is clickable, False otherwise.
+    """
+    try:
+        locator = page.locator(selector)
+
+        # Wait for element to be visible
+        locator.wait_for(state="visible", timeout=timeout)
+
+        # Scroll into view if requested
+        if scroll_into_view:
+            try:
+                locator.scroll_into_view_if_needed(timeout=timeout // 2)
+            except Exception as e:
+                log.debug("Could not scroll element into view: %s", e)
+
+        # Check if element is enabled (not disabled)
+        if locator.is_disabled():
+            log.warning("Element %s is disabled", selector)
+            return False
+
+        return True
+    except Exception as e:
+        log.warning("Element %s not clickable within timeout: %s", selector, e)
+        return False
+
+
+def safe_click(
+    page: Page,
+    selector: str,
+    timeout: int = CLICK_TIMEOUT_MS,
+    max_retries: int = MAX_CLICK_RETRIES,
+    delay: Optional[int] = None,
+    force: bool = False,
+    scroll_into_view: bool = True,
+) -> bool:
+    """Perform a click operation with timeout and retry logic.
+
+    Args:
+        page (Page): The Playwright page object.
+        selector (str): The CSS selector for the element to click.
+        timeout (int, optional): Maximum wait time per attempt in milliseconds. Defaults to CLICK_TIMEOUT_MS.
+        max_retries (int, optional): Maximum number of retry attempts. Defaults to MAX_CLICK_RETRIES.
+        delay (int, optional): Click delay in milliseconds. If None, uses gaussian_random_delay().
+        force (bool, optional): Whether to force the click. Defaults to False.
+        scroll_into_view (bool, optional): Whether to scroll element into view first. Defaults to True.
+
+    Returns:
+        bool: True if click succeeded, False otherwise.
+    """
+    if delay is None:
+        delay = gaussian_random_delay()
+
+    for attempt in range(max_retries):
+        try:
+            # Wait for element to be clickable
+            if not force and not wait_for_clickable(page, selector, timeout, scroll_into_view):
+                log.warning("Element %s not clickable on attempt %d/%d", selector, attempt + 1, max_retries)
+                if attempt < max_retries - 1:
+                    # Exponential backoff
+                    backoff_time = 1000 * (2**attempt)
+                    log.info("Waiting %dms before retry", backoff_time)
+                    page.wait_for_timeout(backoff_time)
+                    continue
+                else:
+                    return False
+
+            # Perform the click
+            page.click(selector, delay=delay, timeout=timeout, force=force)
+            log.debug("Successfully clicked %s on attempt %d", selector, attempt + 1)
+            return True
+
+        except Exception as e:
+            log.warning("Click failed on attempt %d/%d for %s: %s", attempt + 1, max_retries, selector, str(e)[:100])
+
+            if attempt < max_retries - 1:
+                # Exponential backoff
+                backoff_time = 1000 * (2**attempt)
+                log.info("Waiting %dms before retry", backoff_time)
+                page.wait_for_timeout(backoff_time)
+            else:
+                log.error("All click attempts failed for %s", selector)
+                return False
+
+    return False
 
 
 def get_arg_parser(description: str = "Generic Daily Bonus Claimer") -> ArgumentParser:
