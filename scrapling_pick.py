@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from functools import wraps
 from typing import Callable, TypeVar, Any, Dict, List, Optional
 from pathlib import Path
-from playwright.sync_api import Page, ElementHandle, Locator, TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import expect, Page, ElementHandle, Locator, TimeoutError as PlaywrightTimeoutError
 from scrapling.engines.toolbelt.custom import Response, Selector
 from scrapling.fetchers import StealthySession
 from scrapling.cli import log
@@ -385,6 +385,9 @@ def screenshot_action(func: Callable[[Page], T]) -> Callable[[Page], T]:
         Returns:
             T: The return value of the original function.
         """
+        enable_screenshots: bool = False
+        enable_states: bool = True
+
         # Get the function name
         func_name = func.__name__
 
@@ -396,30 +399,40 @@ def screenshot_action(func: Callable[[Page], T]) -> Callable[[Page], T]:
             for i, var_name in enumerate(closure_vars):
                 if var_name == "currency":
                     currency = func.__closure__[i].cell_contents
-                    break
+                elif var_name == "enable_screenshots":
+                    enable_screenshots = func.__closure__[i].cell_contents
+                elif var_name == "enable_states":
+                    enable_states = func.__closure__[i].cell_contents
 
         # Create base filename with timestamp
         timestamp = int(time.time() * 1000)  # milliseconds for uniqueness
 
-        # Ensure screenshots directory exists
-        screenshot_dir = Path("screenshots")
-        screenshot_dir.mkdir(exist_ok=True)
+        if enable_screenshots:
+            # Ensure screenshots directory exists
+            screenshot_dir = Path("screenshots")
+            screenshot_dir.mkdir(exist_ok=True)
 
-        # Take BEFORE screenshot
-        before_filename = f"{func_name}_{currency}_{timestamp}_before.png"
-        page.screenshot(path=str(screenshot_dir / before_filename))
+            # Take BEFORE screenshot
+            before_filename = f"{func_name}_{currency}_{timestamp}_before.png"
+            page.screenshot(path=str(screenshot_dir / before_filename))
+        else:
+            log.info("Screenshots disabled, skipping before/after screenshots.")
 
         # Execute the original function
         result = func(page)
 
         # Get the account state from the live page.
-        account_state = parse_account_state_page(page, currency)
-        if account_state:
-            PICKS[currency].update(account_state=account_state)
+        if enable_states:
+            account_state = parse_account_state_page(page, currency)
+            if account_state:
+                PICKS[currency].update(account_state=account_state)
 
-        # Take AFTER screenshot
-        after_filename = f"{func_name}_{currency}_{timestamp}_after.png"
-        page.screenshot(path=str(screenshot_dir / after_filename))
+        if enable_screenshots:
+            # Take AFTER screenshot
+            after_filename = f"{func_name}_{currency}_{timestamp}_after.png"
+            page.screenshot(path=str(screenshot_dir / after_filename))
+        else:
+            log.info("Screenshots disabled, skipping before/after screenshots.")
 
         return result
 
@@ -440,7 +453,9 @@ def parse_flipclock(page: Page, flipclock_selector: str, flipclock_digits_select
     time_remaining = None
     try:
         # Wait for flipclock to be populated by JavaScript (max 3 seconds)
-        flipclock_element: ElementHandle = page.wait_for_selector(flipclock_selector, timeout=3000, state="attached")
+        flipclock_locator: Locator = page.locator(flipclock_selector)
+        expect(flipclock_locator).to_be_attached(timeout=3000)
+        flipclock_element: ElementHandle = flipclock_locator.element_handle()
     except PlaywrightTimeoutError as e:
         log.warning("Flipclock not found on page (faucet likely ready): %s", str(e)[:100])
 
@@ -466,6 +481,7 @@ def parse_flipclock(page: Page, flipclock_selector: str, flipclock_digits_select
         except (IndexError, AttributeError) as e:
             log.warning("Failed to parse flipclock digits from Page: %s", e)
     else:
+        log.info("active_digits_elements: %s", active_digits_elements)
         log.info("No active flipclock found - faucet may be ready to claim")
 
     return time_remaining
@@ -708,13 +724,16 @@ def google_oauth_login_page_make() -> Callable[[Page], None]:
     return google_login_page, was_claim_attempted
 
 
-def login_page_make(username: str, password: str, currency: str = "UNK") -> Callable[[Page], None]:
+def login_page_make(
+    username: str, password: str, currency: str = "UNK", enable_screenshots: bool = False
+) -> Callable[[Page], None]:
     """Create a login page action.
 
     Args:
         username (str): Username for login.
         password (str): Password for login.
         currency (str, optional): The currency code. Defaults to "UNK".
+        enable_screenshots (bool, optional): Enable screenshots. Defaults to False.
 
     Returns:
         tuple[Callable[[Page], None], Callable[[], bool]]: A tuple containing:
@@ -733,6 +752,7 @@ def login_page_make(username: str, password: str, currency: str = "UNK") -> Call
             None
         """
         _ = currency  # Force currency into closure for screenshot_action decorator
+        _ = enable_screenshots  # Force enable_screenshots into closure for screenshot_action decorator
         login_button_selector = "button[id='process_login']"
 
         if "login" not in page.url:
@@ -766,12 +786,13 @@ def login_page_make(username: str, password: str, currency: str = "UNK") -> Call
     return login_page, was_claim_attempted
 
 
-def make_claim_faucet(selector: str, currency: str = "UNK") -> Callable[[Page], None]:
+def make_claim_faucet(selector: str, currency: str = "UNK", enable_screenshots: bool = False) -> Callable[[Page], None]:
     """Create a claim faucet action.
 
     Args:
         selector (str): The CSS selector for the claim button.
         currency (str, optional): The currency code. Defaults to "UNK".
+        enable_screenshots (bool, optional): Enable screenshots. Defaults to False.
     Returns:
         Callable[[Page], None]: The claim faucet action function.
     """
@@ -786,6 +807,7 @@ def make_claim_faucet(selector: str, currency: str = "UNK") -> Callable[[Page], 
             None
         """
         _ = currency  # Force currency into closure for screenshot_action decorator
+        _ = enable_screenshots  # Force enable_screenshots into closure for screenshot_action decorator
         try:
             page.locator(selector).scroll_into_view_if_needed(timeout=2000)
             page.locator(selector).wait_for(state="visible", timeout=2000)
@@ -843,8 +865,8 @@ def json_to_pick(data: Dict[str, Any]) -> Pick:
     ]
     pick_obj.last_update = datetime.fromisoformat(data["last_update"]) if data["last_update"] else None
     pick_obj.target = data["target"]
-    pick_obj.remaining_claims = data.get("remaining_claims", 0)  # Use .get() for backward compatibility
-    pick_obj.free_spins = data.get("free_spins", 0)  # Use .get() for backward compatibility
+    pick_obj.remaining_claims = data.get("remaining_claims", 0)
+    pick_obj.free_spins = data.get("free_spins", 0)
     return pick_obj
 
 
@@ -937,6 +959,7 @@ def main(
     skip_claim: bool = False,
     play_keno: bool = False,
     summarize: bool = False,
+    enable_screenshots: bool = False,
 ):
     """
     Main function to run the scraper.
@@ -949,6 +972,7 @@ def main(
         skip_claim (bool, optional): Whether to skip the claim step. Defaults to False.
         play_keno (bool, optional): Whether to play keno after claiming. Defaults to False.
         summarize (bool, optional): Whether to summarize the results. Defaults to False.
+        enable_screenshots (bool, optional): Enable screenshots. Defaults to False.
 
     Returns:
         None
@@ -965,8 +989,10 @@ def main(
         if use_google_oauth:
             login_page, claim_already_attempted = google_oauth_login_page_make()
         else:
-            username, password = get_credentials(pick.url)
-            login_page, claim_already_attempted = login_page_make(username, password, currency=pick.currency)
+            username, password, _ = get_credentials(pick.url)
+            login_page, claim_already_attempted = login_page_make(
+                username, password, currency=pick.currency, enable_screenshots=enable_screenshots
+            )
 
         additional_args = {}
         if user_data_dir is not None:
@@ -1005,7 +1031,9 @@ def main(
                     log.info("Skipping claim - already attempted during login (user was already logged in)")
                     continue
 
-                faucet = make_claim_faucet(button_selector, currency=pick.currency)
+                faucet = make_claim_faucet(
+                    button_selector, currency=pick.currency, enable_screenshots=enable_screenshots
+                )
                 _: Response = session.fetch(f"{pick.url}faucet.php", page_action=faucet, wait=5000, timeout=30000)
 
                 log.info("About to play keno on %s", pick.url)
@@ -1070,6 +1098,11 @@ if __name__ == "__main__":
         help="play keno game after claiming the faucet",
         action="store_true",
     )
+    parser.add_argument(
+        "--enable-screenshots",
+        help="enable before/after screenshots for page actions",
+        action="store_true",
+    )
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--skip", help="List of picks by currency to skip", nargs="+", default=[])
     group.add_argument("--only", help="List of picks by currency to run only", nargs="+", default=[])
@@ -1091,4 +1124,5 @@ if __name__ == "__main__":
         args.skip_claim,
         args.play_keno,
         args.summarize,
+        args.enable_screenshots,
     )

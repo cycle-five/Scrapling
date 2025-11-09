@@ -96,8 +96,7 @@ def main(
     user_data_dir: Optional[str] = None,
 ):
     headless = headless if headless is not None else False
-    username, password = get_credentials("https://stake.us")
-    totp_secret = os.getenv("STAKE_2FA")  # Replace with actual TOTP secret if available
+    username, password, totp_secret = get_credentials("https://stake.us")
     action_args = {
         "username": username,
         "password": password,

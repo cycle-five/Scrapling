@@ -1,7 +1,14 @@
 from argparse import ArgumentParser
 from dataclasses import dataclass
-from typing import Callable, Optional, List
-from playwright.sync_api import Page, Response as PlaywrightResponse, Locator, Error as PlaywrightError
+from typing import Callable, Optional, List, Tuple
+from playwright.sync_api import (
+    Page,
+    Response as PlaywrightResponse,
+    Locator,
+    Error as PlaywrightError,
+    ElementHandle,
+    expect,
+)
 from urllib.parse import urlparse
 from scrapling.fetchers import StealthySession
 from scrapling.engines.toolbelt.custom import Response
@@ -370,6 +377,128 @@ def make_login_action_factory(
     return login_action_factory
 
 
+def highlight_element_handle(element: ElementHandle):
+    """Highlight an element on the page for debugging purposes.
+
+    Args:
+        element: The Playwright ElementHandle object
+    """
+    try:
+        element.evaluate(
+            """(element) => {
+                element.style.border = '3px solid red';
+                setTimeout(() => { element.style.border = ''; }, 10000);
+            }"""
+        )
+        log.info("Highlighted element with selector: %s", element)
+    except PlaywrightError as e:
+        log.error("Error highlighting element: %s", str(e))
+
+
+def highlight_element(page: Page, selector: str):
+    """Highlight an element on the page for debugging purposes.
+
+    Args:
+        page: The Playwright Page object
+        selector: The CSS selector of the element to highlight
+    """
+    try:
+        element: Locator = page.locator(selector).first
+        if element.count() > 0:
+            element.evaluate(
+                """(element) => {
+                    element.style.border = '3px solid red';
+                    setTimeout(() => { element.style.border = ''; }, 10000);
+                }"""
+            )
+            log.info("Highlighted element with selector: %s", selector)
+        else:
+            log.warning("No element found to highlight with selector: %s", selector)
+    except PlaywrightError as e:
+        log.error("Error highlighting element: %s", str(e))
+
+
+def make_generic_accept_or_close_modals(
+    main_enabled_selector: str, modal_selector: str, close_modal_selector: str
+) -> Callable[[Page], bool]:
+    """Claim the daily bonus on LuckyBird.io.
+
+    Args:
+        main_enabled_selector: The main CSS selector for enabled buttons on this site.
+        modal_selector: The CSS selector for the modal dialog.
+        close_modal_selector: The CSS selector for the close button on the modal.
+
+    Returns:
+        Callable[[Page], bool]: A function that accepts or closes modals on the given page.
+    """
+
+    def accept_or_close_modals(page: Page) -> bool:
+        claimed: bool = False
+        accept_tokens: set = set(["accept", "claim", "get", "collect", "yes", "agree", "okay"])
+
+        try:
+            log.info("Waiting for daily bonus modal to appear...")
+            locator: Locator = page.locator(modal_selector)
+            expect(locator.first).to_be_visible(timeout=5000)
+        except AssertionError as _:
+            log.info("Initial alerts popups timed out, this likely means the daily bonus has already been claimed.")
+            return False
+
+        try:
+            # Find the claim buttons that are not disabled
+            enabled_buttons: Locator = page.locator(main_enabled_selector)
+            close_buttons: Locator = page.locator(close_modal_selector)
+
+            n = 0
+            while enabled_buttons.count() > 0:
+                n += 1
+                if n > 10:
+                    log.warning("Exceeded maximum attempts to find enabled claim button, aborting...")
+                    break
+
+                # Get the first enabled button, does the order matter here?
+                button: Locator = enabled_buttons.first
+                button_text: str = button.text_content()
+                button_words: set = set(button_text.lower().split())
+
+                log.info("Found enabled button with text: %s", button_text)
+                if accept_tokens & button_words:
+                    log.info("Found enabled button, clicking...")
+                    button.click(delay=gaussian_random_delay(), timeout=5000)
+                    claimed = True
+                else:
+                    log.info("Button text does not contain any accept tokens, skipping...")
+                    # Still click to dismiss it? Need more analysis on what kinds of elements show up here.
+                    # Let's print some debug info instead for now.
+                    log.debug("Button text: %s", button_text)
+                    highlight_element_handle(button.element_handle())
+                    # Maybe try to close the modal instead
+                    if close_buttons.count() > 0:
+                        log.info("Attempting to close modal instead...")
+                        close_button: Locator = close_buttons.first
+                        close_button.click(delay=gaussian_random_delay(), timeout=5000)
+
+                wait_for_load_all_safe(page, timeout=3000)
+                # Locator automatically re-queries the DOM, no need to reassign
+
+            log.info("Successfully processed all modals!")
+        except PlaywrightError as e:
+            log.error("Error clicking button for daily: %s", str(e))
+
+        # Try to close the modal if it's still open
+        try:
+            close_button: Locator = page.locator(close_modal_selector)
+            if close_button.count() > 0:
+                close_button.click(delay=gaussian_random_delay(), timeout=3000)
+                log.info("Closed daily bonus modal")
+        except PlaywrightError:
+            log.warning("Could not close daily bonus modal")
+
+        return claimed
+
+    return accept_or_close_modals
+
+
 def url_to_env_prefix(url: str) -> str:
     """Convert a URL to an environment variable prefix.
 
@@ -386,7 +515,7 @@ def url_to_env_prefix(url: str) -> str:
     return prefix.upper()
 
 
-def get_credentials(url: str) -> tuple[str, str]:
+def get_credentials(url: str, twofa: bool = False) -> Tuple[str, str, str]:
     """Get the credentials for Tronpick.
 
     Raises:
@@ -402,7 +531,12 @@ def get_credentials(url: str) -> tuple[str, str]:
     password = os.getenv(f"{env_prefix}_PASSWORD")
     if not username or not password:
         raise ValueError(f"{env_prefix}_USERNAME and {env_prefix}_PASSWORD must be set")
-    return username, password
+
+    totp_secret = os.getenv(f"{env_prefix}_2FA")
+    if twofa and not totp_secret:
+        raise ValueError(f"{env_prefix}_2FA must be set when twofa=True")
+
+    return username, password, totp_secret
 
 
 def gaussian_random_delay(mean: float = 50, stddev: float = 10) -> int:

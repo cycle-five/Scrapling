@@ -5,11 +5,10 @@ import os
 import pyotp
 import re
 
-sys.path.append(".")
-
 from scrapling.engines.toolbelt.custom import Response
 from scrapling.fetchers import StealthySession
 from playwright.sync_api import Page, Error as PlaywrightError, Locator, ElementHandle
+from playwright.sync_api import expect
 from playwright._impl._errors import TimeoutError, TargetClosedError
 from casino import (
     get_credentials,
@@ -21,6 +20,7 @@ from casino import (
     make_login_action_factory,
     CurrencyDisplayConfig,
     Currency,
+    make_generic_accept_or_close_modals,
 )
 
 url = "https://luckybird.io/"
@@ -44,6 +44,9 @@ close_selectors = [
 ]
 # daily claim selectors
 main_enabled_selector = "section.dailyBonus_page button.el-button--primary:enabled"
+modal_selector = "section.dailyBonus_page"
+close_modal_selector = "section.dailyBonus_page .commonAlert_close"
+
 buy_btn_selector = "li.tw-hidden:nth-child(2) > p:nth-child(1)"
 daily_bonus_tab_selector = ".tw-self-center > div:nth-child(1) > div:nth-child(1) > div:nth-child(5)"
 claim_daily_bonus_selector = "button.el-button--primary:not(.is-disabled)"
@@ -80,107 +83,6 @@ def luckybird_mtb(page: Page) -> bool:
         close_btn_selector=",".join(close_selectors),
     )
     mtb(page)
-
-
-def highlight_element_handle(element: ElementHandle):
-    """Highlight an element on the page for debugging purposes.
-
-    Args:
-        element: The Playwright ElementHandle object
-    """
-    try:
-        element.evaluate(
-            """(element) => {
-                element.style.border = '3px solid red';
-                # element.style.backgroundColor = 'yellow';
-                setTimeout(() => { element.style.border = ''; }, 10000);
-            }"""
-        )
-        log.info("Highlighted element with selector: %s", element)
-    except PlaywrightError as e:
-        log.error("Error highlighting element: %s", str(e))
-
-
-def highlight_element(page: Page, selector: str):
-    """Highlight an element on the page for debugging purposes.
-
-    Args:
-        page: The Playwright Page object
-        selector: The CSS selector of the element to highlight
-    """
-    try:
-        element: Locator = page.locator(selector).first
-        if element.count() > 0:
-            element.evaluate(
-                """(element) => {
-                    element.style.border = '3px solid red';
-                    # element.style.backgroundColor = 'yellow';
-                    setTimeout(() => { element.style.border = ''; }, 10000);
-                }"""
-            )
-            log.info("Highlighted element with selector: %s", selector)
-        else:
-            log.warning("No element found to highlight with selector: %s", selector)
-    except PlaywrightError as e:
-        log.error("Error highlighting element: %s", str(e))
-
-
-def luckybird_daily_initial_popups(page: Page) -> bool:
-    """Claim the daily bonus on LuckyBird.io.
-
-    Args:
-        page: The Playwright Page object
-
-    Returns:
-        bool: True if claim was successful, False otherwise
-    """
-    # claim_button_selector = "section.dailyBonus_page button.el-button--primary:not(.is-disabled)"
-    # modal_selector = "section.commonAlert_page"
-    modal_selector = "section.dailyBonus_page"
-    close_modal_selector = "section.dailyBonus_page .commonAlert_close"
-
-    try:
-        # Wait for the daily bonus modal to appear
-        log.info("Waiting for daily bonus modal to appear...")
-        page.wait_for_selector(modal_selector, state="visible", timeout=3000)
-    except PlaywrightError as e:
-        log.warning("Initial alerts popups timed out: %s", str(e))
-        return False
-
-    try:
-        # Find the claim button that is not disabled
-        # enabled_buttons: Locator = page.locator(main_enabled_selector)
-        enabled_buttons: List[ElementHandle] = page.query_selector_all(main_enabled_selector)
-
-        n = 0
-        while enabled_buttons.count() > 0:
-            n += 1
-            if n > 3:
-                break
-
-            # Click the first available claim button
-            log.info("Found enabled button, clicking...")
-            highlight_element_handle(enabled_buttons)
-            enabled_buttons.first.click(delay=gaussian_random_delay(), timeout=5000, force=True)
-
-            # enabled_buttons: Locator = page.locator(main_enabled_selector)
-            enabled_buttons: List[ElementHandle] = page.query_selector_all(main_enabled_selector)
-        # Wait for the claim to process
-        wait_for_load_all_safe(page, timeout=3000)
-
-        log.info("Successfully claimed daily bonus!")
-        return True
-    except PlaywrightError as e:
-        log.error("Error clicking button for daily: %s", str(e))
-
-    # Try to close the modal if it's still open
-    try:
-        close_button = page.locator(close_modal_selector)
-        if close_button.count() > 0:
-            close_button.click(delay=gaussian_random_delay(), timeout=3000)
-            log.info("Closed daily bonus modal")
-    except PlaywrightError:
-        pass
 
 
 def parse_coin_balances(page: Page) -> Dict[str, Optional[float]]:
@@ -279,21 +181,40 @@ login_action_factory: Callable[[str, str, Optional[str]], Callable[[Page], None]
 
 
 def main(
-    proxy: Optional[str],
     headless: bool = False,
     google_oauth: bool = False,
     skip_claim: bool = False,
+    proxy: Optional[str] = None,
     user_data_dir: Optional[str] = None,
 ):
     # Get LuckyBird credentials
-    username, password = get_credentials("https://luckybird.io")
-    totp_secret = os.getenv("LUCKYBIRD_2FA")
+    username, password, totp_secret = get_credentials("https://luckybird.io", twofa=True)
 
     additional_args = {}
     if user_data_dir is not None:
         additional_args["user_data_dir"] = user_data_dir
 
     login_action: Callable[[Page], None] = login_action_factory(username, password, totp_secret)
+    accept_or_claim_modals: Callable[[Page], bool] = make_generic_accept_or_close_modals(
+        main_enabled_selector, modal_selector, close_modal_selector
+    )
+
+    def luckybird_action(page: Page) -> None:
+        # Perform login
+        login_action(page)
+        wait_for_load_all_safe(page)
+
+        # Claim daily bonus unless skipped
+        if not skip_claim:
+            claimed = accept_or_claim_modals(page)
+            if claimed:
+                log.info("Daily bonus claimed successfully.")
+            else:
+                log.info("No daily bonus available to claim.")
+
+        # Parse and log coin balances
+        balances = parse_coin_balances(page)
+        log.info("Final Coin Balances: %s", balances)
 
     with StealthySession(
         proxy=proxy,
@@ -304,7 +225,7 @@ def main(
         additional_args=additional_args,
     ) as session:
         # Login to LuckyBird and claim daily bonus
-        _: Response = session.fetch(login_url, page_action=login_action, wait=5000, google_search=False)
+        _: Response = session.fetch(login_url, page_action=luckybird_action, wait=5000, timeout=60000)
 
 
 if __name__ == "__main__":
