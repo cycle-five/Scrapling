@@ -2,6 +2,7 @@ from functools import lru_cache
 from re import compile as re_compile
 
 from curl_cffi.requests import Response as CurlResponse
+from playwright._impl._errors import Error as PlaywrightError
 from playwright.sync_api import Page as SyncPage, Response as SyncResponse
 from playwright.async_api import Page as AsyncPage, Response as AsyncResponse
 
@@ -114,7 +115,10 @@ class ResponseFactory:
 
         history = cls._process_response_history(first_response, parser_arguments)
         try:
-            page_content = final_response.text()
+            if "html" in final_response.all_headers().get("content-type", ""):
+                page_content = cls._get_page_content(page)
+            else:
+                page_content = final_response.body()
         except Exception as e:  # pragma: no cover
             log.error(f"Error getting page content: {e}")
             page_content = ""
@@ -180,6 +184,36 @@ class ResponseFactory:
         return history
 
     @classmethod
+    def _get_page_content(cls, page: SyncPage) -> str:
+        """
+        A workaround for the Playwright issue with `page.content()` on Windows. Ref.: https://github.com/microsoft/playwright/issues/16108
+        :param page: The page to extract content from.
+        :return:
+        """
+        while True:
+            try:
+                return page.content() or ""
+            except PlaywrightError:
+                page.wait_for_timeout(500)
+                continue
+        return ""  # pyright: ignore
+
+    @classmethod
+    async def _get_async_page_content(cls, page: AsyncPage) -> str:
+        """
+        A workaround for the Playwright issue with `page.content()` on Windows. Ref.: https://github.com/microsoft/playwright/issues/16108
+        :param page: The page to extract content from.
+        :return:
+        """
+        while True:
+            try:
+                return (await page.content()) or ""
+            except PlaywrightError:
+                await page.wait_for_timeout(500)
+                continue
+        return ""  # pyright: ignore
+
+    @classmethod
     async def from_async_playwright_response(
         cls,
         page: AsyncPage,
@@ -216,7 +250,10 @@ class ResponseFactory:
 
         history = await cls._async_process_response_history(first_response, parser_arguments)
         try:
-            page_content = await final_response.text()
+            if "html" in (await final_response.all_headers()).get("content-type", ""):
+                page_content = await cls._get_async_page_content(page)
+            else:
+                page_content = await final_response.body()
         except Exception as e:  # pragma: no cover
             log.error(f"Error getting page content in async: {e}")
             page_content = ""
