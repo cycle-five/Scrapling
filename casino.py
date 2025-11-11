@@ -464,17 +464,6 @@ def make_generic_accept_or_close_modals(
                 log.info("Found enabled button with text: %s", button_text)
                 if accept_tokens & button_words:
                     log.info("Found enabled button, clicking...")
-                    # Check for overlaying modals that might intercept the click
-                    try:
-                        overlaying_modals = page.locator(modal_selector).filter(lambda el: el.is_visible() and el.bounding_box() is not None)
-                        if overlaying_modals.count() > 0:
-                            log.info("Found overlaying modal, attempting to close it first...")
-                            overlaying_close = page.locator(close_modal_selector)
-                            if overlaying_close.count() > 0:
-                                overlaying_close.first.click(timeout=2000, force=True)
-                                page.wait_for_timeout(500)
-                    except PlaywrightError as e:
-                        log.debug("Could not close overlaying modal: %s", str(e))
 
                     # Try normal click first, then force if it fails
                     try:
