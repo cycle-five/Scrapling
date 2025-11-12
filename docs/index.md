@@ -36,10 +36,11 @@ Built for the modern Web, Scrapling features its own rapid parsing engine and fe
 
 <!-- sponsors -->
 <div style="text-align: center;">
-    <a href="https://www.thordata.com/?ls=github&lk=D4Vinci" target="_blank" title="A global network of over 60M+ residential proxies with 99.7% availability, ensuring stable and reliable web data scraping to support AI, BI, and workflows."><img src="https://raw.githubusercontent.com/D4Vinci/Scrapling/main/images/thordata.jpg"></a>
+    <a href="https://www.scrapeless.com/en?utm_source=official&utm_term=scrapling" target="_blank" title="Effortless Web Scraping Toolkit for Business and Developers"><img src="https://raw.githubusercontent.com/D4Vinci/Scrapling/main/images/scrapeless.jpg"></a>
     <a href="https://evomi.com?utm_source=github&utm_medium=banner&utm_campaign=d4vinci-scrapling" target="_blank" title="Evomi is your Swiss Quality Proxy Provider, starting at $0.49/GB"><img src="https://raw.githubusercontent.com/D4Vinci/Scrapling/main/images/evomi.png"></a>
     <a href="https://visit.decodo.com/Dy6W0b" target="_blank" title="Try the Most Efficient Residential Proxies for Free"><img src="https://raw.githubusercontent.com/D4Vinci/Scrapling/main/images/decodo.png"></a>
     <a href="https://petrosky.io/d4vinci" target="_blank" title="PetroSky delivers cutting-edge VPS hosting."><img src="https://raw.githubusercontent.com/D4Vinci/Scrapling/main/images/petrosky.png"></a>
+    <a href="https://app.cyberyozh.com/?utm_source=github&utm_medium=scrapling" target="_blank" title="We have gathered the best solutions for multi‑accounting and automation in one place."><img src="https://raw.githubusercontent.com/D4Vinci/Scrapling/main/images/cyberyozh.png"></a>
 </div>
 <!-- /sponsors -->
 
@@ -82,33 +83,10 @@ Scrapling’s GitHub stars have grown steadily since its release (see chart belo
 
 <div id="chartContainer">
   <a href="https://github.com/D4Vinci/Scrapling">
-    <img id="chartImage" alt="Star History Chart" loading="lazy" src="https://api.star-history.com/svg?repos=D4Vinci/Scrapling&type=Date" height="400"/>
+    <img id="chartImage" alt="Star History Chart" loading="lazy" src="https://api.star-history.com/svg?repos=D4Vinci/Scrapling&type=date&legend=top-left&theme=dark" height="400"/>
   </a>
 </div>
 
-<script>
-const observer = new MutationObserver((mutations) => {
-  mutations.forEach((mutation) => {
-    if (mutation.attributeName === 'data-md-color-media') {
-      const colorMedia = document.body.getAttribute('data-md-color-media');
-      const isDarkScheme = document.body.getAttribute('data-md-color-scheme') === 'slate';
-      const chartImg = document.querySelector('#chartImage');
-      const baseUrl = 'https://api.star-history.com/svg?repos=D4Vinci/Scrapling&type=Date';
-      
-      if (colorMedia === '(prefers-color-scheme)' ? isDarkScheme : colorMedia.includes('dark')) {
-        chartImg.src = `${baseUrl}&theme=dark`;
-      } else {
-        chartImg.src = baseUrl;
-      }
-    }
-  });
-});
-
-observer.observe(document.body, {
-  attributes: true,
-  attributeFilter: ['data-md-color-media', 'data-md-color-scheme']
-});
-</script>
 
 ## Installation
 Scrapling requires Python 3.10 or higher:
@@ -146,6 +124,17 @@ Starting with v0.3.2, this installation only includes the parser engine and its 
          pip install "scrapling[all]"
          ```
      Don't forget that you need to install the browser dependencies with `scrapling install` after any of these extras (if you didn't already)
+
+### Docker
+You can also install a Docker image with all extras and browsers with the following command from DockerHub:
+```bash
+docker pull pyd4vinci/scrapling
+```
+Or download it from the GitHub registry:
+```bash
+docker pull ghcr.io/d4vinci/scrapling:latest
+```
+This image is automatically built and pushed through GitHub actions on the repository's main branch.
 
 ## How the documentation is organized
 Scrapling has a lot of documentation, so we try to follow a guideline called the [Diátaxis documentation framework](https://diataxis.fr/).

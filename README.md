@@ -10,7 +10,7 @@
     <a href="https://badge.fury.io/py/Scrapling" alt="PyPI version">
         <img alt="PyPI version" src="https://badge.fury.io/py/Scrapling.svg"></a>
     <a href="https://pepy.tech/project/scrapling" alt="PyPI Downloads">
-        <img alt="PyPI Downloads" src="https://static.pepy.tech/personalized-badge/scrapling?period=total&units=INTERNATIONAL_SYSTEM&left_color=GRAY&right_color=GREEN&left_text=Downloads"></a>
+        <img alt="PyPI Downloads" src="https://static.pepy.tech/personalized-badge/scrapling?period=total&units=INTERNATIONAL_SYSTEM&left_color=GREY&right_color=GREEN&left_text=Downloads"></a>
     <br/>
     <a href="https://discord.gg/EMgGbDceNQ" alt="Discord" target="_blank">
       <img alt="Discord" src="https://img.shields.io/discord/1360786381042880532?style=social&logo=discord&link=https%3A%2F%2Fdiscord.gg%2FEMgGbDceNQ">
@@ -67,10 +67,11 @@ Built for the modern Web, Scrapling features its own rapid parsing engine and fe
 
 <!-- sponsors -->
 
-<a href="https://www.thordata.com/?ls=github&lk=D4Vinci" target="_blank" title="A global network of over 60M+ residential proxies with 99.7% availability, ensuring stable and reliable web data scraping to support AI, BI, and workflows."><img src="https://raw.githubusercontent.com/D4Vinci/Scrapling/main/images/thordata.jpg"></a>
+<a href="https://www.scrapeless.com/en?utm_source=official&utm_term=scrapling" target="_blank" title="Effortless Web Scraping Toolkit for Business and Developers"><img src="https://raw.githubusercontent.com/D4Vinci/Scrapling/main/images/scrapeless.jpg"></a>
 <a href="https://evomi.com?utm_source=github&utm_medium=banner&utm_campaign=d4vinci-scrapling" target="_blank" title="Evomi is your Swiss Quality Proxy Provider, starting at $0.49/GB"><img src="https://raw.githubusercontent.com/D4Vinci/Scrapling/main/images/evomi.png"></a>
 <a href="https://visit.decodo.com/Dy6W0b" target="_blank" title="Try the Most Efficient Residential Proxies for Free"><img src="https://raw.githubusercontent.com/D4Vinci/Scrapling/main/images/decodo.png"></a>
 <a href="https://petrosky.io/d4vinci" target="_blank" title="PetroSky delivers cutting-edge VPS hosting."><img src="https://raw.githubusercontent.com/D4Vinci/Scrapling/main/images/petrosky.png"></a>
+<a href="https://app.cyberyozh.com/?utm_source=github&utm_medium=scrapling" target="_blank" title="We have gathered the best solutions for multi‑accounting and automation in one place."><img src="https://raw.githubusercontent.com/D4Vinci/Scrapling/main/images/cyberyozh.png"></a>
 <a href="https://www.swiftproxy.net/" target="_blank" title="Unlock Reliable Proxy Services with Swiftproxy!"><img src="https://raw.githubusercontent.com/D4Vinci/Scrapling/main/images/swiftproxy.png"></a>
 <a href="https://www.rapidproxy.io/?ref=d4v" target="_blank" title="Affordable Access to the Proxy World – bypass CAPTCHAs blocks, and avoid additional costs."><img src="https://raw.githubusercontent.com/D4Vinci/Scrapling/main/images/rapidproxy.jpg"></a>
 <a href="https://serpapi.com/?utm_source=scrapling" target="_blank" title="Scrape Google and other search engines with SerpApi"><img src="https://raw.githubusercontent.com/D4Vinci/Scrapling/main/images/SerpApi.png"></a>
@@ -296,11 +297,15 @@ Starting with v0.3.2, this installation only includes the parser engine and its 
    Don't forget that you need to install the browser dependencies with `scrapling install` after any of these extras (if you didn't already)
 
 ### Docker
-You can also install a Docker image with all extras and browsers with the following command:
+You can also install a Docker image with all extras and browsers with the following command from DockerHub:
 ```bash
 docker pull pyd4vinci/scrapling
 ```
-This image is automatically built and pushed to Docker Hub through GitHub actions right here.
+Or download it from the GitHub registry:
+```bash
+docker pull ghcr.io/d4vinci/scrapling:latest
+```
+This image is automatically built and pushed through GitHub actions on the repository's main branch.
 
 ## Contributing
 
