@@ -1,6 +1,9 @@
+Automated translations: [العربيه](README_AR.md) | [Español](README_ES.md) | [Deutsch](README_DE.md) | [简体中文](README_CN.md) | [日本語](README_JP.md) | [Русский](README_RU.md)
+
+
 <p align=center>
   <br>
-  <a href="https://scrapling.readthedocs.io/en/latest/" target="_blank"><img src="https://raw.githubusercontent.com/D4Vinci/Scrapling/main/images/poster.png" style="width: 50%; height: 100%;"/></a>
+  <a href="https://scrapling.readthedocs.io/en/latest/" target="_blank"><img src="https://raw.githubusercontent.com/D4Vinci/Scrapling/main/images/poster.png" style="width: 50%; height: 100%;" alt="main poster"/></a>
   <br>
   <i><code>Easy, effortless Web Scraping as it should be!</code></i>
 </p>
@@ -49,7 +52,7 @@
 
 Scrapling isn't just another Web Scraping library. It's the first **adaptive** scraping library that learns from website changes and evolves with them. While other libraries break when websites update their structure, Scrapling automatically relocates your elements and keeps your scrapers running.
 
-Built for the modern Web, Scrapling features its own rapid parsing engine and fetchers to handle all Web Scraping challenges you face or will face. Built by Web Scrapers for Web Scrapers and regular users, there's something for everyone.
+Built for the modern Web, Scrapling features **its own rapid parsing engine** and fetchers to handle all Web Scraping challenges you face or will face. Built by Web Scrapers for Web Scrapers and regular users, there's something for everyone.
 
 ```python
 >> from scrapling.fetchers import Fetcher, AsyncFetcher, StealthyFetcher, DynamicFetcher
@@ -71,7 +74,6 @@ Built for the modern Web, Scrapling features its own rapid parsing engine and fe
 <a href="https://evomi.com?utm_source=github&utm_medium=banner&utm_campaign=d4vinci-scrapling" target="_blank" title="Evomi is your Swiss Quality Proxy Provider, starting at $0.49/GB"><img src="https://raw.githubusercontent.com/D4Vinci/Scrapling/main/images/evomi.png"></a>
 <a href="https://visit.decodo.com/Dy6W0b" target="_blank" title="Try the Most Efficient Residential Proxies for Free"><img src="https://raw.githubusercontent.com/D4Vinci/Scrapling/main/images/decodo.png"></a>
 <a href="https://petrosky.io/d4vinci" target="_blank" title="PetroSky delivers cutting-edge VPS hosting."><img src="https://raw.githubusercontent.com/D4Vinci/Scrapling/main/images/petrosky.png"></a>
-<a href="https://app.cyberyozh.com/?utm_source=github&utm_medium=scrapling" target="_blank" title="We have gathered the best solutions for multi‑accounting and automation in one place."><img src="https://raw.githubusercontent.com/D4Vinci/Scrapling/main/images/cyberyozh.png"></a>
 <a href="https://www.swiftproxy.net/" target="_blank" title="Unlock Reliable Proxy Services with Swiftproxy!"><img src="https://raw.githubusercontent.com/D4Vinci/Scrapling/main/images/swiftproxy.png"></a>
 <a href="https://www.rapidproxy.io/?ref=d4v" target="_blank" title="Affordable Access to the Proxy World – bypass CAPTCHAs blocks, and avoid additional costs."><img src="https://raw.githubusercontent.com/D4Vinci/Scrapling/main/images/rapidproxy.jpg"></a>
 <a href="https://serpapi.com/?utm_source=scrapling" target="_blank" title="Scrape Google and other search engines with SerpApi"><img src="https://raw.githubusercontent.com/D4Vinci/Scrapling/main/images/SerpApi.png"></a>
@@ -147,6 +149,9 @@ with DynamicSession(headless=True, disable_resources=False, network_idle=True) a
 page = DynamicFetcher.fetch('https://quotes.toscrape.com/')
 data = page.css('.quote .text::text')
 ```
+
+> [!NOTE]
+> There's a wonderful guide to get you started quickly with Scraping [here](https://substack.thewebscraping.club/p/scrapling-hands-on-guide) written by The Web Scraping Club. In case you find it easier to get you started than the [documentation website](https://scrapling.readthedocs.io/en/latest/).
 
 ### Advanced Parsing & Navigation
 ```python
@@ -272,7 +277,7 @@ Starting with v0.3.2, this installation only includes the parser engine and its 
 
 ### Optional Dependencies
 
-1. If you are going to use any of the extra features below, the fetchers, or their classes, then you need to install fetchers' dependencies, and then install their browser dependencies with
+1. If you are going to use any of the extra features below, the fetchers, or their classes, then you need to install fetchers' dependencies and then install their browser dependencies with
     ```bash
     pip install "scrapling[fetchers]"
     
@@ -294,7 +299,7 @@ Starting with v0.3.2, this installation only includes the parser engine and its 
        ```bash
        pip install "scrapling[all]"
        ```
-   Don't forget that you need to install the browser dependencies with `scrapling install` after any of these extras (if you didn't already)
+   Remember that you need to install the browser dependencies with `scrapling install` after any of these extras (if you didn't already)
 
 ### Docker
 You can also install a Docker image with all extras and browsers with the following command from DockerHub:
