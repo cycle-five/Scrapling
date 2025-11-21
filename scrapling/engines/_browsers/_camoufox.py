@@ -2,19 +2,22 @@ from random import randint
 from re import compile as re_compile
 
 from playwright.sync_api import (
-    Page,
-    Locator,
+    Response as SyncPlaywrightResponse,
     sync_playwright,
+    Locator,
+    Page,
 )
 from playwright.async_api import (
     async_playwright,
-    Page as async_Page,
-    Locator as AsyncLocator,
-    Playwright as AsyncPlaywright,
+    Response as AsyncPlaywrightResponse,
     BrowserContext as AsyncBrowserContext,
+    Playwright as AsyncPlaywright,
+    Locator as AsyncLocator,
+    Page as async_Page,
 )
+from playwright._impl._errors import Error as PlaywrightError
 
-from ._validators import validate_fetch as _validate, CamoufoxConfig
+from ._validators import validate_fetch as _validate
 from ._base import SyncSession, AsyncSession, StealthySessionMixin
 from scrapling.core.utils import log
 from scrapling.core._types import (
@@ -181,6 +184,43 @@ class StealthySession(StealthySessionMixin, SyncSession):
         if self.cookies:  # pragma: no cover
             self.context.add_cookies(self.cookies)
 
+    def __enter__(self):  # pragma: no cover
+        self.__create__()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def close(self):  # pragma: no cover
+        """Close all resources"""
+        if self._closed:  # pragma: no cover
+            return
+
+        if self.context:
+            self.context.close()
+            self.context = None
+
+        if self.playwright:
+            self.playwright.stop()
+            self.playwright = None
+
+        self._closed = True
+
+    @staticmethod
+    def _get_page_content(page: Page) -> str:
+        """
+        A workaround for the Playwright issue with `page.content()` on Windows. Ref.: https://github.com/microsoft/playwright/issues/16108
+        :param page: The page to extract content from.
+        :return:
+        """
+        while True:
+            try:
+                return page.content() or ""
+            except PlaywrightError:
+                page.wait_for_timeout(1000)
+                continue
+        return ""  # pyright: ignore
+
     def _solve_cloudflare(self, page: Page) -> None:  # pragma: no cover
         """Solve the cloudflare challenge displayed on the playwright page passed
 
@@ -192,19 +232,18 @@ class StealthySession(StealthySessionMixin, SyncSession):
             page.wait_for_load_state("networkidle", timeout=500)
         except PlaywrightError:
             pass
-        self._wait_for_networkidle(page, timeout=5000)
-        challenge_type = self._detect_cloudflare(ResponseFactory._get_page_content(page))
+        challenge_type = self._detect_cloudflare(self._get_page_content(page))
         if not challenge_type:
             log.error("No Cloudflare challenge found.")
             return
         else:
             log.info(f'The turnstile version discovered is "{challenge_type}"')
             if challenge_type == "non-interactive":
-                while "<title>Just a moment...</title>" in (ResponseFactory._get_page_content(page)):
+                while "<title>Just a moment...</title>" in (self._get_page_content(page)):
                     log.info("Waiting for Cloudflare wait page to disappear.")
                     page.wait_for_timeout(1000)
                     page.wait_for_load_state()
-                log.info("Cloudflare captcha is solved")
+                log.info("Cloudflare turnstile is solved")
                 return
 
             else:
@@ -215,14 +254,15 @@ class StealthySession(StealthySessionMixin, SyncSession):
                 # )
                 if challenge_type != "embedded":
                     box_selector = ".main-content p+div>div>div"
-                    while "Verifying you are human." in ResponseFactory._get_page_content(page):
+                    while "Verifying you are human." in self._get_page_content(page):
                         # Waiting for the verify spinner to disappear, checking every 1s if it disappeared
                         page.wait_for_timeout(500)
 
                 outer_box = {}
                 iframe = page.frame(url=__CF_PATTERN__)
                 if iframe is not None:
-                    self._wait_for_page_stability(iframe, True, True)
+                    iframe.wait_for_load_state(state="domcontentloaded")
+                    iframe.wait_for_load_state("networkidle")
 
                 # Debug: Log iframe and page information
                 log.info(f"Current page URL: {page.url}")
@@ -305,20 +345,16 @@ class StealthySession(StealthySessionMixin, SyncSession):
                 # Move the mouse to the center of the window, then press and hold the left mouse button
                 log.info(f"Clicking on the captcha at coordinates ({captcha_x}, {captcha_y})")
                 page.mouse.click(captcha_x, captcha_y, delay=60, button="left")
-                self._wait_for_networkidle(page)
-                if iframe is not None:
-                    # Wait for the frame to be removed from the page (with 30s timeout = 300 iterations * 100 ms)
-                    attempts = 0
-                    while iframe in page.frames:
-                        if attempts >= 300:
-                            log.info("Cloudflare iframe didn't disappear after 30s, continuing...")
-                            break
-                        page.wait_for_timeout(100)
-                        attempts += 1
+                # page.wait_for_load_state(state="domcontentloaded", timeout=3000)
+                # if iframe is not None:
+                #     # Wait for the frame to be removed from the page
+                #     while iframe in page.frames:
+                #         page.wait_for_timeout(100)
                 if challenge_type != "embedded":
                     page.locator(box_selector).last.wait_for(state="detached")
                     page.locator(".zone-name-title").wait_for(state="hidden")
-                self._wait_for_page_stability(page, True, False)
+                page.wait_for_load_state(state="load")
+                page.wait_for_load_state(state="domcontentloaded")
 
                 log.info("Cloudflare captcha is solved")
                 return
@@ -373,34 +409,50 @@ class StealthySession(StealthySessionMixin, SyncSession):
                 ("solve_cloudflare", solve_cloudflare, self.solve_cloudflare),
                 ("selector_config", selector_config, self.selector_config),
             ],
-            CamoufoxConfig,
             _UNSET,
         )
 
         if self._closed:  # pragma: no cover
             raise RuntimeError("Context manager has been closed")
 
+        final_response = None
         referer = (
             generate_convincing_referer(url) if (params.google_search and "referer" not in self._headers_keys) else None
         )
 
+        def handle_response(finished_response: SyncPlaywrightResponse):
+            nonlocal final_response
+            if (
+                finished_response.request.resource_type == "document"
+                and finished_response.request.is_navigation_request()
+                and finished_response.request.frame == page_info.page.main_frame
+            ):
+                final_response = finished_response
+
         page_info = self._get_page(params.timeout, params.extra_headers, params.disable_resources)
-        final_response = [None]
-        handle_response = self._create_response_handler(page_info, final_response)
+        page_info.mark_busy(url=url)
 
         try:  # pragma: no cover
             # Navigate to URL and wait for a specified state
             page_info.page.on("response", handle_response)
             first_response = page_info.page.goto(url, referer=referer)
-            self._wait_for_page_stability(page_info.page, params.load_dom, params.network_idle)
+            if params.load_dom:
+                page_info.page.wait_for_load_state(state="domcontentloaded")
+
+            if params.network_idle:
+                page_info.page.wait_for_load_state("networkidle")
 
             if not first_response:
                 raise RuntimeError(f"Failed to get response for {url}")
 
             if params.solve_cloudflare:
                 self._solve_cloudflare(page_info.page)
-                # Make sure the page is fully loaded after the captcha
-                self._wait_for_page_stability(page_info.page, params.load_dom, params.network_idle)
+                # Make sure the page is fully loaded after the turnstile is solved
+                page_info.page.wait_for_load_state(state="load")
+                if params.load_dom:
+                    page_info.page.wait_for_load_state(state="domcontentloaded")
+                if params.network_idle:
+                    page_info.page.wait_for_load_state("networkidle")
 
             if params.page_action:
                 try:
@@ -413,13 +465,17 @@ class StealthySession(StealthySessionMixin, SyncSession):
                     waiter: Locator = page_info.page.locator(params.wait_selector)
                     waiter.first.wait_for(state=params.wait_selector_state)
                     # Wait again after waiting for the selector, helpful with protections like Cloudflare
-                    self._wait_for_page_stability(page_info.page, params.load_dom, params.network_idle)
+                    page_info.page.wait_for_load_state(state="load")
+                    if params.load_dom:
+                        page_info.page.wait_for_load_state(state="domcontentloaded")
+                    if params.network_idle:
+                        page_info.page.wait_for_load_state("networkidle")
                 except Exception as e:
                     log.error(f"Error waiting for selector {params.wait_selector}: {e}")
 
             page_info.page.wait_for_timeout(params.wait)
             response = ResponseFactory.from_playwright_response(
-                page_info.page, first_response, final_response[0], params.selector_config
+                page_info.page, first_response, final_response, params.selector_config
             )
 
             # Close the page to free up resources
@@ -544,25 +600,65 @@ class AsyncStealthySession(StealthySessionMixin, AsyncSession):
         if self.cookies:
             await self.context.add_cookies(self.cookies)  # pyright: ignore [reportArgumentType]
 
-    async def _solve_cloudflare(self, page: async_Page):  # pragma: no cover
+    async def __aenter__(self):
+        await self.__create__()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.close()
+
+    async def close(self):
+        """Close all resources"""
+        if self._closed:  # pragma: no cover
+            return
+
+        if self.context:
+            await self.context.close()
+            self.context = None  # pyright: ignore
+
+        if self.playwright:
+            await self.playwright.stop()
+            self.playwright = None  # pyright: ignore
+
+        self._closed = True
+
+    @staticmethod
+    async def _get_page_content(page: async_Page) -> str:
+        """
+        A workaround for the Playwright issue with `page.content()` on Windows. Ref.: https://github.com/microsoft/playwright/issues/16108
+        :param page: The page to extract content from.
+        :return:
+        """
+        while True:
+            try:
+                return (await page.content()) or ""
+            except PlaywrightError:
+                await page.wait_for_timeout(1000)
+                continue
+        return ""  # pyright: ignore
+
+    async def _solve_cloudflare(self, page: async_Page):
         """Solve the cloudflare challenge displayed on the playwright page passed. The async version
 
         :param page: The async targeted page
         :return:
         """
-        await self._wait_for_networkidle(page, timeout=5000)
-        challenge_type = self._detect_cloudflare(await ResponseFactory._get_async_page_content(page))
+        try:
+            await page.wait_for_load_state("networkidle", timeout=5000)
+        except PlaywrightError:
+            pass
+        challenge_type = self._detect_cloudflare(await self._get_page_content(page))
         if not challenge_type:
             log.error("No Cloudflare challenge found.")
             return
         else:
             log.info(f'The turnstile version discovered is "{challenge_type}"')
             if challenge_type == "non-interactive":  # pragma: no cover
-                while "<title>Just a moment...</title>" in (await ResponseFactory._get_async_page_content(page)):
+                while "<title>Just a moment...</title>" in (await self._get_page_content(page)):
                     log.info("Waiting for Cloudflare wait page to disappear.")
                     await page.wait_for_timeout(1000)
                     await page.wait_for_load_state()
-                log.info("Cloudflare captcha is solved")
+                log.info("Cloudflare turnstile is solved")
                 return
 
             else:
@@ -574,14 +670,15 @@ class AsyncStealthySession(StealthySessionMixin, AsyncSession):
                 )
                 if challenge_type != "embedded":
                     box_selector = ".main-content p+div>div>div"
-                    while "Verifying you are human." in (await ResponseFactory._get_async_page_content(page)):
+                    while "Verifying you are human." in (await self._get_page_content(page)):
                         # Waiting for the verify spinner to disappear, checking every 1s if it disappeared
                         await page.wait_for_timeout(500)
 
                 outer_box = {}
                 iframe = page.frame(url=__CF_PATTERN__)
                 if iframe is not None:
-                    await self._wait_for_page_stability(iframe, True, True)
+                    await iframe.wait_for_load_state(state="domcontentloaded")
+                    await iframe.wait_for_load_state("networkidle")
 
                     if challenge_type != "embedded":
                         while not await (await iframe.frame_element()).is_visible():
@@ -592,7 +689,7 @@ class AsyncStealthySession(StealthySessionMixin, AsyncSession):
                 if not iframe or not outer_box:
                     outer_box: Any = await page.locator(box_selector).last.bounding_box()
 
-                # Calculate the Captcha coordinates for any viewport
+                # Calculate the Turnstile coordinates for any viewport
                 # Use first element and validate it's in viewport
                 locator = page.locator(box_selector).first
                 count = await locator.count()
@@ -621,26 +718,22 @@ class AsyncStealthySession(StealthySessionMixin, AsyncSession):
                     log.error("Bounding box is None after scrolling into view")
                     return
 
-                captcha_x, captcha_y = outer_box["x"] + 26, outer_box["y"] + 25
+                turnstile_x, turnstile_y = outer_box["x"] + 26, outer_box["y"] + 25
 
                 # Move the mouse to the center of the window, then press and hold the left mouse button
-                await page.mouse.click(captcha_x, captcha_y, delay=60, button="left")
-                await self._wait_for_networkidle(page)
+                await page.mouse.click(turnstile_x, turnstile_y, delay=60, button="left")
+                await page.wait_for_load_state("networkidle")
                 if iframe is not None:
-                    # Wait for the frame to be removed from the page (with 30s timeout = 300 iterations * 100 ms)
-                    attempts = 0
+                    # Wait for the frame to be removed from the page
                     while iframe in page.frames:
-                        if attempts >= 300:
-                            log.info("Cloudflare iframe didn't disappear after 30s, continuing...")
-                            break
                         await page.wait_for_timeout(100)
-                        attempts += 1
                 if challenge_type != "embedded":
                     await page.locator(box_selector).wait_for(state="detached")
                     await page.locator(".zone-name-title").wait_for(state="hidden")
-                await self._wait_for_page_stability(page, True, False)
+                await page.wait_for_load_state(state="load")
+                await page.wait_for_load_state(state="domcontentloaded")
 
-                log.info("Cloudflare captcha is solved")
+                log.info("Cloudflare turnstile is solved")
                 return
 
     async def fetch(
@@ -693,20 +786,28 @@ class AsyncStealthySession(StealthySessionMixin, AsyncSession):
                 ("solve_cloudflare", solve_cloudflare, self.solve_cloudflare),
                 ("selector_config", selector_config, self.selector_config),
             ],
-            CamoufoxConfig,
             _UNSET,
         )
 
         if self._closed:  # pragma: no cover
             raise RuntimeError("Context manager has been closed")
 
+        final_response = None
         referer = (
             generate_convincing_referer(url) if (params.google_search and "referer" not in self._headers_keys) else None
         )
 
+        async def handle_response(finished_response: AsyncPlaywrightResponse):
+            nonlocal final_response
+            if (
+                finished_response.request.resource_type == "document"
+                and finished_response.request.is_navigation_request()
+                and finished_response.request.frame == page_info.page.main_frame
+            ):
+                final_response = finished_response
+
         page_info = await self._get_page(params.timeout, params.extra_headers, params.disable_resources)
-        final_response = [None]
-        handle_response = self._create_response_handler(page_info, final_response)
+        page_info.mark_busy(url=url)
 
         if TYPE_CHECKING:
             if not isinstance(page_info.page, async_Page):
@@ -716,15 +817,23 @@ class AsyncStealthySession(StealthySessionMixin, AsyncSession):
             # Navigate to URL and wait for a specified state
             page_info.page.on("response", handle_response)
             first_response = await page_info.page.goto(url, referer=referer)
-            await self._wait_for_page_stability(page_info.page, params.load_dom, params.network_idle)
+            if params.load_dom:
+                await page_info.page.wait_for_load_state(state="domcontentloaded")
+
+            if params.network_idle:
+                await page_info.page.wait_for_load_state("networkidle")
 
             if not first_response:
                 raise RuntimeError(f"Failed to get response for {url}")
 
             if params.solve_cloudflare:
                 await self._solve_cloudflare(page_info.page)
-                # Make sure the page is fully loaded after the captcha
-                await self._wait_for_page_stability(page_info.page, params.load_dom, params.network_idle)
+                # Make sure the page is fully loaded after the turnstile
+                await page_info.page.wait_for_load_state(state="load")
+                if params.load_dom:
+                    await page_info.page.wait_for_load_state(state="domcontentloaded")
+                if params.network_idle:
+                    await page_info.page.wait_for_load_state("networkidle")
 
             if params.page_action:
                 try:
@@ -737,7 +846,11 @@ class AsyncStealthySession(StealthySessionMixin, AsyncSession):
                     waiter: AsyncLocator = page_info.page.locator(params.wait_selector)
                     await waiter.first.wait_for(state=params.wait_selector_state)
                     # Wait again after waiting for the selector, helpful with protections like Cloudflare
-                    await self._wait_for_page_stability(page_info.page, params.load_dom, params.network_idle)
+                    await page_info.page.wait_for_load_state(state="load")
+                    if params.load_dom:
+                        await page_info.page.wait_for_load_state(state="domcontentloaded")
+                    if params.network_idle:
+                        await page_info.page.wait_for_load_state("networkidle")
                 except Exception as e:
                     log.error(f"Error waiting for selector {params.wait_selector}: {e}")
 
@@ -745,7 +858,7 @@ class AsyncStealthySession(StealthySessionMixin, AsyncSession):
 
             # Create response object
             response = await ResponseFactory.from_async_playwright_response(
-                page_info.page, first_response, final_response[0], params.selector_config
+                page_info.page, first_response, final_response, params.selector_config
             )
 
             # Close the page to free up resources
